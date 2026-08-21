@@ -27,10 +27,13 @@
 #include <QtTest/QTest>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
-#include <numbers>
 #include <csignal>
+#include <fcntl.h>
+#include <numbers>
 #include <sys/resource.h>
+#include <unistd.h>
 
 namespace {
 /**
@@ -182,8 +185,18 @@ bool runTemporarySnapshotChecks(QString &error) {
   limited.rlim_cur = std::min<rlim_t>(originalLimit.rlim_cur, 1024);
   const bool limitSet = ::setrlimit(RLIMIT_FSIZE, &limited) == 0;
   QString writeError;
+  const int savedStderr = ::dup(STDERR_FILENO);
+  const int devnull = ::open("/dev/null", O_WRONLY | O_CLOEXEC);
+  if (savedStderr >= 0 && devnull >= 0)
+    ::dup2(devnull, STDERR_FILENO);
   const bool interruptedSave =
       limitSet && saveTemporarySnapshot(largeImage, path, writeError);
+  if (savedStderr >= 0) {
+    ::dup2(savedStderr, STDERR_FILENO);
+    ::close(savedStderr);
+  }
+  if (devnull >= 0)
+    ::close(devnull);
   const bool limitRestored = ::setrlimit(RLIMIT_FSIZE, &originalLimit) == 0;
   const bool signalRestored =
       ::sigaction(SIGXFSZ, &originalSignal, nullptr) == 0;
@@ -541,16 +554,16 @@ bool runQuickOutputChecks(QString &error) {
     error = QStringLiteral("Could not create quick-output directory");
     return false;
   }
-  const QByteArray previousDir = qgetenv("OMASNAP_SCREENSHOT_DIR");
-  qputenv("OMASNAP_SCREENSHOT_DIR", directory.path().toUtf8());
+  const QByteArray previousDir = qgetenv("NIRISNAP_SCREENSHOT_DIR");
+  qputenv("NIRISNAP_SCREENSHOT_DIR", directory.path().toUtf8());
   outputError.clear();
   const bool saved = quickOutput(image, QuickOutputMode::Save, outputError);
   const QStringList files =
       QDir(directory.path()).entryList({QStringLiteral("*.png")}, QDir::Files);
   if (previousDir.isEmpty())
-    qunsetenv("OMASNAP_SCREENSHOT_DIR");
+    qunsetenv("NIRISNAP_SCREENSHOT_DIR");
   else
-    qputenv("OMASNAP_SCREENSHOT_DIR", previousDir);
+    qputenv("NIRISNAP_SCREENSHOT_DIR", previousDir);
   if (!saved || !outputError.isEmpty() || files.size() != 1 ||
       QImage(QDir(directory.path()).filePath(files.constFirst())).isNull() ||
       QFile::exists(temporarySnapshotPath())) {
@@ -570,10 +583,10 @@ bool runCrashSnapshotChecks(const CaptureData &capture, QString &error) {
     error = QStringLiteral("Could not create crash-snapshot directory");
     return false;
   }
-  const QByteArray previousDir = qgetenv("OMASNAP_SCREENSHOT_DIR");
-  qputenv("OMASNAP_SCREENSHOT_DIR", directory.path().toUtf8());
+  const QByteArray previousDir = qgetenv("NIRISNAP_SCREENSHOT_DIR");
+  qputenv("NIRISNAP_SCREENSHOT_DIR", directory.path().toUtf8());
   const auto restoreDir = qScopeGuard(
-      [&previousDir] { qputenv("OMASNAP_SCREENSHOT_DIR", previousDir); });
+      [&previousDir] { qputenv("NIRISNAP_SCREENSHOT_DIR", previousDir); });
   const QString snapshotPath = temporarySnapshotPath();
   QFile::remove(snapshotPath);
   const auto settleUntilWritten = [&snapshotPath] {
@@ -1219,24 +1232,25 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
         path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                   QFileDevice::ExeOwner);
   };
-  const QString fakeHyprctl = QDir(commands.path()).filePath(QStringLiteral("hyprctl"));
+  const QString fakeNiri = QDir(commands.path()).filePath(QStringLiteral("niri"));
   const QString fakeGrim = QDir(commands.path()).filePath(QStringLiteral("grim"));
-  const QByteArray hyprctlScript =
+  const QByteArray niriScript =
       QByteArrayLiteral("#!/usr/bin/env bash\n"
-                        "if [[ \"$1 $2\" == \"monitors -j\" ]]; then\n"
-                        "  printf '%s\\n' "
-                        "'[{\"focused\":true,\"scale\":1,\"width\":320,"
-                        "\"height\":240,\"transform\":0,\"name\":\"TEST\","
-                        "\"x\":0,\"y\":0,\"activeWorkspace\":{\"id\":7}}]'\n"
-                        "else\n"
-                        "  printf '[]\\n'\n"
-                        "fi\n");
+                        "case \"$*\" in\n"
+                        "  'msg -j focused-output') printf '%s\\n' "
+                        "'{\"name\":\"TEST\",\"modes\":[{\"width\":320,"
+                        "\"height\":240}],\"current_mode\":0,\"logical\":{"
+                        "\"x\":0,\"y\":0,\"width\":320,\"height\":240,"
+                        "\"scale\":1,\"transform\":\"Normal\"}}' ;;\n"
+                        "  'msg -j windows'|'msg -j workspaces') printf '[]\\n' ;;\n"
+                        "  *) exit 64 ;;\n"
+                        "esac\n");
   // grim streams the capture on stdout.
   const QByteArray grimScript =
       QByteArrayLiteral("#!/usr/bin/env bash\n"
                         "set -euo pipefail\n"
-                        "cat -- \"$OMASNAP_TEST_PPM\"\n");
-  if (!writeExecutable(fakeHyprctl, hyprctlScript) ||
+                        "cat -- \"$NIRISNAP_TEST_PPM\"\n");
+  if (!writeExecutable(fakeNiri, niriScript) ||
       !writeExecutable(fakeGrim, grimScript)) {
     error = QStringLiteral("Could not create async capture commands");
     return false;
@@ -1252,9 +1266,9 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
   }
 
   const QByteArray oldPath = qgetenv("PATH");
-  const QByteArray oldPpm = qgetenv("OMASNAP_TEST_PPM");
+  const QByteArray oldPpm = qgetenv("NIRISNAP_TEST_PPM");
   qputenv("PATH", commands.path().toUtf8() + ':' + oldPath);
-  qputenv("OMASNAP_TEST_PPM", sourcePath.toUtf8());
+  qputenv("NIRISNAP_TEST_PPM", sourcePath.toUtf8());
 
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");
@@ -1287,9 +1301,9 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
     editor.close();
     qputenv("PATH", oldPath);
     if (oldPpm.isEmpty())
-      qunsetenv("OMASNAP_TEST_PPM");
+      qunsetenv("NIRISNAP_TEST_PPM");
     else
-      qputenv("OMASNAP_TEST_PPM", oldPpm);
+      qputenv("NIRISNAP_TEST_PPM", oldPpm);
     return false;
   }
 
@@ -1302,9 +1316,9 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
   editor.close();
   qputenv("PATH", oldPath);
   if (oldPpm.isEmpty())
-    qunsetenv("OMASNAP_TEST_PPM");
+    qunsetenv("NIRISNAP_TEST_PPM");
   else
-    qputenv("OMASNAP_TEST_PPM", oldPpm);
+    qputenv("NIRISNAP_TEST_PPM", oldPpm);
 
   if (selected.size() != QSize(160, 150)) {
     error = QStringLiteral("Async capture region selection produced %1x%2")
@@ -1426,6 +1440,110 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
   QFile::remove(snapshotPath);
   return true;
 }
+
+bool runWindowWorkerDrainCheck(QApplication &application, QString &error) {
+  QTemporaryDir commands;
+  if (!commands.isValid()) {
+    error = QStringLiteral("Could not create worker-drain test directory");
+    return false;
+  }
+  const QString fakeNiri = QDir(commands.path()).filePath(QStringLiteral("niri"));
+  QFile script(fakeNiri);
+  const QByteArray contents = QByteArrayLiteral(
+      "#!/usr/bin/env bash\n"
+      "set -euo pipefail\n"
+      "path=''\n"
+      "while (($#)); do case \"$1\" in --path) path=$2; shift 2;; *) shift;; esac; done\n"
+      "[[ $path = /* ]] || exit 2\n"
+      "printf '%s' \"$path\" > \"$NIRISNAP_TEST_EDITOR_CAPTURE_PATH\"\n"
+      "(sleep 0.30; cp -- \"$NIRISNAP_TEST_EDITOR_PNG\" \"$path\") >/dev/null 2>&1 &\n");
+  if (!script.open(QIODevice::WriteOnly) ||
+      script.write(contents) != contents.size()) {
+    error = QStringLiteral("Could not write worker-drain fake Niri");
+    return false;
+  }
+  script.close();
+  if (!QFile::setPermissions(fakeNiri, QFileDevice::ReadOwner |
+                                           QFileDevice::WriteOwner |
+                                           QFileDevice::ExeOwner)) {
+    error = QStringLiteral("Could not make worker-drain fake Niri executable");
+    return false;
+  }
+
+  QImage png(4, 3, QImage::Format_RGB32);
+  png.fill(Qt::green);
+  const QString pngPath = QDir(commands.path()).filePath(QStringLiteral("window.png"));
+  const QString capturePath =
+      QDir(commands.path()).filePath(QStringLiteral("capture-path"));
+  if (!png.save(pngPath, "PNG")) {
+    error = QStringLiteral("Could not write worker-drain PNG");
+    return false;
+  }
+
+  const QByteArray originalPath = qgetenv("PATH");
+  qputenv("PATH", commands.path().toUtf8() + ':' + originalPath);
+  qputenv("NIRISNAP_TEST_EDITOR_PNG", pngPath.toUtf8());
+  qputenv("NIRISNAP_TEST_EDITOR_CAPTURE_PATH", capturePath.toUtf8());
+  std::atomic_bool termination{false};
+  CaptureData capture;
+  capture.monitor.geometry = QRect(0, 0, 100, 100);
+  capture.monitor.pixelSize = QSize(100, 100);
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(100, 100, QImage::Format_RGB32);
+  capture.source.fill(Qt::black);
+  capture.previewSize = capture.source.size();
+  capture.windows = {{{10, 10, 60, 60}, QStringLiteral("7"),
+                      QStringLiteral("worker")}};
+
+  {
+    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Window,
+                         QuickOutputMode::None, &termination);
+    editor.resize(100, 100);
+    editor.show();
+    application.processEvents();
+    QTest::mouseMove(&editor, QPoint(30, 30), 20);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QElapsedTimer timer;
+    timer.start();
+    while (!QFile::exists(capturePath) && timer.elapsed() < 1000) {
+      application.processEvents(QEventLoop::ExcludeUserInputEvents);
+      QThread::msleep(5);
+    }
+    if (!QFile::exists(capturePath)) {
+      error = QStringLiteral("Overlay clean-window worker did not start");
+      qputenv("PATH", originalPath);
+      qunsetenv("NIRISNAP_TEST_EDITOR_PNG");
+      qunsetenv("NIRISNAP_TEST_EDITOR_CAPTURE_PATH");
+      return false;
+    }
+    termination.store(true, std::memory_order_release);
+  }
+
+  QFile pathFile(capturePath);
+  if (!pathFile.open(QIODevice::ReadOnly)) {
+    error = QStringLiteral("Could not read overlay worker target path");
+    qputenv("PATH", originalPath);
+    return false;
+  }
+  const QString target = QString::fromUtf8(pathFile.readAll());
+  QThread::msleep(400);
+  QDir runtime(QFileInfo(target).absolutePath());
+  runtime.cdUp();
+  const bool remains = QFile::exists(target) || QFileInfo(target).dir().exists() ||
+                       !runtime.entryList({QStringLiteral("window-*"),
+                                           QStringLiteral(".delete-*")},
+                                          QDir::Dirs | QDir::Hidden |
+                                              QDir::NoDotAndDotDot)
+                            .isEmpty();
+  qputenv("PATH", originalPath);
+  qunsetenv("NIRISNAP_TEST_EDITOR_PNG");
+  qunsetenv("NIRISNAP_TEST_EDITOR_CAPTURE_PATH");
+  if (remains) {
+    error = QStringLiteral("CaptureEditor destruction did not drain native worker cleanup");
+    return false;
+  }
+  return true;
+}
 } // namespace
 /** Runs the interaction and rendering smoke checks. */
 int main(int argc, char **argv) {
@@ -1499,24 +1617,28 @@ int main(int argc, char **argv) {
     qWarning().noquote() << snapshotError;
     return 94;
   }
+  if (!runWindowWorkerDrainCheck(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 95;
+  }
   const QString outputRoot =
       argc > 1 ? QString::fromLocal8Bit(argv[1])
                : QDir(QDir::tempPath())
-                     .filePath(QStringLiteral("omasnap-native-smoke"));
+                     .filePath(QStringLiteral("nirisnap-native-smoke"));
   const QString snapshotPath = temporarySnapshotPath();
   QFile::remove(snapshotPath);
   const QString savedRoot = QDir(outputRoot).filePath(QStringLiteral("saved"));
   QDir(savedRoot).removeRecursively();
-  qputenv("OMASNAP_SCREENSHOT_DIR", savedRoot.toUtf8());
+  qputenv("NIRISNAP_SCREENSHOT_DIR", savedRoot.toUtf8());
 
   const QString nativeStableId =
-      qEnvironmentVariable("OMASNAP_SMOKE_NATIVE_STABLE_ID");
+      qEnvironmentVariable("NIRISNAP_SMOKE_NATIVE_STABLE_ID");
   if (!nativeStableId.isEmpty()) {
     QImage nativeSurface;
     QString nativeError;
-    if (!captureWindowSurface(
+    if (captureWindowSurface(
             {{}, nativeStableId, QStringLiteral("native smoke")}, nativeSurface,
-            nativeError)) {
+            nativeError) != CaptureOutcome::Success) {
       qWarning().noquote() << nativeError;
       return 10;
     }
@@ -2327,21 +2449,24 @@ int main(int argc, char **argv) {
   if (!recognizeText(ocrImage, ocrError)
            .contains(QStringLiteral("OCR smoke test 42")))
     return 5;
-  const QByteArray savedOmasnapLangs = qgetenv("OMASNAP_OCR_LANGS");
-  const QByteArray savedOmarchyLangs = qgetenv("OMARCHY_OCR_LANGS");
-  qputenv("OMASNAP_OCR_LANGS", "");
-  qputenv("OMARCHY_OCR_LANGS", "eng");
+  const QByteArray savedNirisnapLangs = qgetenv("NIRISNAP_OCR_LANGS");
+  qunsetenv("NIRISNAP_OCR_LANGS");
   const QString fallbackOcr = recognizeText(ocrImage, ocrError);
-  if (savedOmasnapLangs.isEmpty())
-    qunsetenv("OMASNAP_OCR_LANGS");
+  if (savedNirisnapLangs.isEmpty())
+    qunsetenv("NIRISNAP_OCR_LANGS");
   else
-    qputenv("OMASNAP_OCR_LANGS", savedOmasnapLangs);
-  if (savedOmarchyLangs.isEmpty())
-    qunsetenv("OMARCHY_OCR_LANGS");
-  else
-    qputenv("OMARCHY_OCR_LANGS", savedOmarchyLangs);
+    qputenv("NIRISNAP_OCR_LANGS", savedNirisnapLangs);
   if (!fallbackOcr.contains(QStringLiteral("OCR smoke test 42")))
     return 65;
+  qputenv("NIRISNAP_OCR_LANGS", "eng;sh");
+  QString invalidOcrError;
+  if (!recognizeText(ocrImage, invalidOcrError).isEmpty() ||
+      invalidOcrError.isEmpty())
+    return 66;
+  if (savedNirisnapLangs.isEmpty())
+    qunsetenv("NIRISNAP_OCR_LANGS");
+  else
+    qputenv("NIRISNAP_OCR_LANGS", savedNirisnapLangs);
   QTest::mouseMove(&editor, QPoint(400, 300), 20);
   QTest::keyClick(&editor, Qt::Key_T);
   QTest::keyClick(&editor, Qt::Key_Escape);
@@ -2389,7 +2514,7 @@ int main(int argc, char **argv) {
   }
   if (!QFile::exists(savedPath))
     return 70;
-  if (qEnvironmentVariableIsSet("OMASNAP_SMOKE_COPY")) {
+  if (qEnvironmentVariableIsSet("NIRISNAP_SMOKE_COPY")) {
     QString clipboardError;
     if (!copyPngFileToClipboard(savedPath, clipboardError)) {
       qWarning().noquote() << clipboardError;

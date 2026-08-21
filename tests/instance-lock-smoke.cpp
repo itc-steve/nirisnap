@@ -196,7 +196,7 @@ bool runUnwritableLockCheck(const QString &root, QString &error) {
     error = QStringLiteral("Could not create the read-only lock directory");
     return false;
   }
-  QLockFile lock(QDir(locked).filePath(QStringLiteral("omasnap.instance")));
+  QLockFile lock(QDir(locked).filePath(QStringLiteral("nirisnap.instance")));
   const InstanceLockResult result =
       acquireInstanceLock(lock, InstanceMode::Capture);
   const bool ok = !result.proceed &&
@@ -222,7 +222,7 @@ bool runInstanceLockSmoke(QString &error) {
     return false;
   }
   const QString lockPath =
-      QDir(lockRoot.path()).filePath(QStringLiteral("omasnap.instance"));
+      QDir(lockRoot.path()).filePath(QStringLiteral("nirisnap.instance"));
   return runFileEditHandoverCheck(lockPath, error) &&
          runCaptureCancelCheck(lockPath, error) &&
          runStaleLockCheck(lockPath, error) &&

@@ -1,8 +1,6 @@
 /** @fileoverview Declares screenshot capture, rendering, and output types. */
 #pragma once
 
-#include <cstdint>
-
 #include <QPainterPath>
 #include <QColor>
 #include <QImage>
@@ -10,16 +8,18 @@
 #include <QString>
 #include <QVector>
 
+#include <atomic>
+#include <optional>
+
 class QFont;
 class QPainter;
-class QProcess;
 
 struct MonitorInfo {
   QString name;
   QRect geometry;
   QSize pixelSize;
   qreal scale = 1.0;
-  int workspaceId = 0;
+  std::optional<quint64> workspaceId;
 };
 
 struct WindowTarget {
@@ -38,6 +38,7 @@ struct CaptureData {
 
 enum class BackgroundStyle { None, Aurora, Sunset, Lagoon, Violet };
 enum class QuickOutputMode { None, Copy, Save, Both };
+enum class CaptureOutcome { Success, Cancelled, Error };
 
 enum class SpotlightShape { Ellipse, Rectangle, RoundedRectangle };
 enum class RedactionStyle { Solid, Pixelate };
@@ -81,11 +82,14 @@ enum class AnnotationLayer { Redaction, Default };
 [[nodiscard]] bool loadCaptureFonts();
 [[nodiscard]] QFont annotationTextFont(qreal size);
 /**
- * Discovers the focused monitor (name, geometry, scale). Fast: only one
- * `hyprctl monitors` call. Safe to call on the main thread to position the
- * overlay before the pixel capture itself runs in the background.
+ * Discovers the focused Niri output (name, logical geometry, scale). Safe to
+ * call on the main thread before pixel capture runs in the background.
  */
 [[nodiscard]] bool probeFocusedMonitor(MonitorInfo &monitor, QString &error);
+/** Runs Niri's native picker and returns its selected window id. */
+[[nodiscard]] CaptureOutcome
+pickWindowTarget(WindowTarget &window, QString &error,
+                 const std::atomic_bool *termination = nullptr);
 /**
  * Captures the focused monitor's pixels onto the given monitor, and its window
  * list when `includeWindows` is set. Window discovery runs alongside the screen
@@ -98,11 +102,9 @@ enum class AnnotationLayer { Redaction, Default };
 /** Convenience: probes the focused monitor, then captures its pixels. */
 [[nodiscard]] bool captureFocusedMonitor(CaptureData &capture,
                                          bool includeWindows, QString &error);
-[[nodiscard]] bool captureWindowSurface(const WindowTarget &window,
-                                        QImage &image, QString &error);
-/** Returns an upright image for captured Wayland buffer contents. */
-[[nodiscard]] QImage normalizeWaylandCapture(const QImage &image,
-                                             std::uint32_t transform);
+[[nodiscard]] CaptureOutcome
+captureWindowSurface(const WindowTarget &window, QImage &image, QString &error,
+                     const std::atomic_bool *termination = nullptr);
 [[nodiscard]] QImage renderCapture(const CaptureData &capture,
                                    const QRectF &selection,
                                    const QVector<Annotation> &annotations,
@@ -145,7 +147,7 @@ QImage applyRedactionsScaled(QImage image, const QVector<Annotation> &redactions
                              const QRectF &selection, const QSizeF &targetSize);
 /** Creates or repairs a private directory owned by the current user. */
 [[nodiscard]] bool ensurePrivateDirectory(const QString &path);
-/** Returns Omasnap's private runtime directory, or empty on failure. */
+/** Returns Nirisnap's private runtime directory, or empty on failure. */
 [[nodiscard]] QString secureRuntimeDirectory();
 [[nodiscard]] QString moveSnapshotToScreenshots(const QString &sourcePath,
                                                 QString &error);

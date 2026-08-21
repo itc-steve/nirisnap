@@ -50,7 +50,7 @@ SignalOutcome terminateHolder(qint64 pid, QString &error) {
     return SignalOutcome::Sent;
   if (errno == ESRCH)
     return SignalOutcome::AlreadyGone;
-  error = QStringLiteral("Could not stop the running omasnap instance "
+  error = QStringLiteral("Could not stop the running nirisnap instance "
                          "(pid %1): %2")
               .arg(pid)
               .arg(QString::fromLocal8Bit(std::strerror(errno)));
@@ -144,7 +144,7 @@ InstanceLockResult acquireInstanceLock(QLockFile &lock, InstanceMode mode) {
     if (waitForHandover(lock))
       return {true, 0, {}, holderPid};
     return {false, kInstanceLockErrorExitCode,
-            QStringLiteral("Timed out waiting for omasnap (pid %1) to release "
+            QStringLiteral("Timed out waiting for nirisnap (pid %1) to release "
                            "the single-instance lock")
                 .arg(holderPid),
             holderPid};

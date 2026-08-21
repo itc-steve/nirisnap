@@ -1,237 +1,234 @@
-# Omasnap
+# Nirisnap
 
-A native Wayland screenshot and annotation overlay designed for Omarchy and Hyprland.
-It captures the focused monitor before mapping an exclusive layer-shell surface, so the
-editor never appears in its own screenshot. The editor retains annotations as movable,
-resizable vector layers and preserves the monitor's native pixels on scaled displays.
-
-[![Looping Omasnap demonstration](assets/omasnap.gif)](assets/omasnap.mp4)
+Native Wayland screenshot capture and annotation for **Niri**, **Noctalia Shell**, and **CachyOS/Arch**.
 
 ## Features
 
-- Freeform region, window, and full-monitor capture modes.
-- Clean window-surface capture through Wayland image-copy protocols. A failed native
-  capture stays in the window picker; Omasnap never substitutes a crop of the desktop.
-- Select/move/resize layers, mouse-wheel scaling, and eight external recropping handles.
-- Arrows, straight lines, smoothed freehand strokes, translucent highlighter strokes,
-  rectangles, numbered markers, editable Neucha text, and secure redaction with
-  opaque or randomized non-spatial mosaic output.
-- Per-layer preset or custom colors (including highlighter ink), undo/redo history,
-  OCR-region capture,
-  mesh-gradient backdrops, and rendered drop shadows.
-- Pin a finished capture as a bottom-right always-on-top layer surface, launched
-  from the same `omasnap` executable and visible on every workspace.
-- Crash-resistant working snapshots under `/run/user/<UID>/omasnap/` (falling back to
-  a private `/tmp/omasnap-<UID>/`), written immediately after selection and overwritten
-  after every completed edit. Saving moves that file into `~/Pictures/Screenshots`;
-  clipboard output streams the same PNG.
-- Verified PNG clipboard output through `wl-copy`/`wl-paste`, plus timestamped files
-  under `~/Pictures/Screenshots` by default.
-- Open an image already on the clipboard directly in the annotation editor.
-- Correct native-pixel export on fractional or integer-scaled monitors.
+- Freeform region, Niri-native window, and full-monitor capture.
+- Movable and resizable vector annotations: arrows, lines, freehand, highlighter, rectangles, numbered markers, text, and spotlight/loupe.
+- Secure solid or randomized non-spatial mosaic redaction.
+- Per-layer colors, undo/redo, OCR region capture, gradient backdrops, and rendered shadows.
+- External recrop handles and native-pixel export on fractional-scale monitors.
+- Copy, save, or copy-and-save output; direct quick-output CLI modes.
+- Open an existing file or Wayland clipboard image in the editor.
+- Pin finished captures as draggable always-visible layer surfaces.
+- Private crash-recovery snapshots under `$XDG_RUNTIME_DIR/nirisnap` with a secure `/tmp/nirisnap-$UID` fallback.
+- Single-instance overlay toggle: press once to open, again to dismiss.
+- Noctalia bar widget, capture panel, settings, and IPC methods.
 
-## Platform scope
+## How capture works
 
-The supported target is **Wayland + Hyprland**, with Omarchy as the primary integration.
-The renderer, layer surface, clipboard, and clean-window capture use Wayland protocols;
-monitor/window discovery currently calls `hyprctl`. `grim` captures the monitor before
-the layer maps. Selection displays that captured frame, while the annotation editor uses
-a translucent layer scrim over the live desktop and draws only the selected capture.
-Another Wayland compositor could support the application after supplying equivalent
-monitor and window discovery; generic Wayland support is not claimed by 1.0.
+Nirisnap reads focused-output, workspace, and window metadata from Niri's stable JSON IPC. `grim` captures focused-output pixels before Nirisnap maps its layer-shell overlay.
 
-Runtime commands used by the application:
+`--capture-window` uses `niri msg pick-window`, then asks Niri to render that exact window with `screenshot-window --id`. It never substitutes a desktop crop when native window capture fails.
 
-- `hyprctl`
-- `grim`
-- `wl-copy` and `wl-paste`
-- `tesseract`
-- `omarchy-notification-send` when available; saved captures include a thumbnail and
-  reopen in Omasnap when clicked. Notification failure does not invalidate output.
+> **Window-picker cancellation:** press `Escape` to cancel Niri's picker. Niri 26.04 exposes no IPC action to cancel an active picker, so invoking Nirisnap again cannot dismiss the crosshair by itself; the original process stays attached until you press `Escape` or click.
 
-## Install on Omarchy
+> **Niri 26.04 clipboard behavior:** Niri always places its raw native window screenshot on the clipboard before Nirisnap opens the editor. Niri exposes no flag to disable this. Copying from Nirisnap later replaces it with the annotated image; cancelling after window selection leaves the raw window image on the clipboard.
 
-Clone the repository and run the Omarchy installer:
+## Install on CachyOS Niri + Noctalia
+
+Target stack is the default CachyOS Niri desktop: **Niri**, **Noctalia Shell 4.x** via `qs -c noctalia-shell`, and **noctalia-qs**.
+
+You need:
+
+- `niri` and `qs` on `PATH`
+- `~/.local/bin` on `PATH` (CachyOS user sessions usually have this)
+- Noctalia Shell 4.4.3 or later (CachyOS `noctalia-shell`)
+
+### 1. Build and install Nirisnap
 
 ```bash
-git clone https://github.com/tobi/omasnap.git
-cd omasnap
-./install-omarchy
+git clone https://github.com/itc-steve/nirisnap.git
+cd nirisnap
+./packaging/install-local.sh --check   # dry run; no writes
+./packaging/install-local.sh
 ```
 
-The installer uses Omarchy's package helper for missing dependencies, builds in
-`~/.cache/omasnap`, and installs under `~/.local`. It does not modify
-Hyprland configuration.
+The installer runs as your desktop user. It asks `sudo` only for packages.
+It builds Nirisnap, runs the offscreen smoke suite, then installs under `~/.local`.
+It links the Noctalia plugin and copies a Niri keybind snippet.
+It will not replace an existing Nirisnap install or plugin path.
+It does not edit Noctalia `settings.json` or Niri configuration.
 
-### Hyprland binding
+Packages it can install:
 
-Paste this into a Lua config loaded after `require("default.hypr.omarchy")`:
-
-```lua
-hl.unbind("PRINT")
-hl.unbind("F12")
-hl.unbind("ALT + SHIFT + 4")
-
-o.bind("PRINT", "Screenshot", "omasnap")
-o.bind("F12", "Screenshot", "omasnap")
-o.bind("ALT + SHIFT + 4", "Screenshot", "omasnap")
-
-hl.layer_rule({
-  match = { namespace = "^omasnap$" },
-  no_anim = true,
-  animation = "none",
-})
+```text
+base-devel cmake ninja pkgconf qt6-base layer-shell-qt grim
+wl-clipboard tesseract tesseract-data-eng libnotify
 ```
 
-Each of these keys toggles: the first press opens the overlay, the next press dismisses it.
+Set `NIRISNAP_PREFIX` to use a prefix other than `~/.local`.
 
-Apply and verify:
+### 2. Confirm `qs` starts
 
 ```bash
-hyprctl reload
-hyprctl configerrors
-hyprctl binds -j | jq -c \
-  '[.[] | select(.description == "Screenshot") | {modmask,key,description}]'
+qs --version
 ```
 
-`omarchy plugin add` is intentionally not used. Omarchy plugins are Quickshell QML
-extensions; they do not install native executables or system packages.
-
-Set `OMASNAP_PREFIX` before running `install-omarchy` to use a prefix other than
-`~/.local`.
-
-### Manual Arch Linux build
-
-Install the complete build/runtime dependency set:
+If that prints a version, restart Noctalia:
 
 ```bash
-sudo pacman -S --needed \
-  base-devel cmake ninja pkgconf qt6-base layer-shell-qt \
-  wayland wayland-protocols hyprland grim wl-clipboard \
-  tesseract tesseract-data-eng tesseract-data-tha
+qs kill -c noctalia-shell
+qs -d -c noctalia-shell
 ```
 
-Build and install:
+If `qs` dies with `undefined symbol` … `Qt_6_PRIVATE_API`, the CachyOS `noctalia-qs` package is older than your Qt. Rebuild it. See [If qs fails after a Qt upgrade](#if-qs-fails-after-a-qt-upgrade).
+
+### 3. Add the bar widget
+
+1. Open **Noctalia Settings → Bar → Widgets**.
+2. Add **Nirisnap**.
+
+The plugin matches CachyOS Noctalia 4.x (`minNoctaliaVersion` 4.4.3).
+
+Bar controls:
+
+| Input | Action |
+|---|---|
+| Left click | Start configured default capture |
+| Middle click | Open capture panel |
+| Right click | Open plugin settings |
+
+Panel actions: Region, Window, Full monitor, and Edit clipboard image.
+Settings choose default capture, output behavior, and icon color.
+
+IPC from a terminal or a Niri bind:
 
 ```bash
-cmake -S . -B build -G Ninja \
+qs -c noctalia-shell ipc call plugin:nirisnap toggle
+qs -c noctalia-shell ipc call plugin:nirisnap region
+qs -c noctalia-shell ipc call plugin:nirisnap window
+qs -c noctalia-shell ipc call plugin:nirisnap fullscreen
+qs -c noctalia-shell ipc call plugin:nirisnap clipboard
+```
+
+### 4. Bind Ctrl+Shift+1 (required)
+
+The installer does **not** edit Niri config. You must replace CachyOS's stock screenshot bind yourself.
+
+CachyOS Niri puts this in `~/.config/niri/cfg/keybinds.kdl`:
+
+```kdl
+    CTRL+Shift+1                        { screenshot; }
+```
+
+Replace that line with:
+
+```kdl
+    CTRL+Shift+1 repeat=false hotkey-overlay-title="Screenshot: Nirisnap" { spawn "nirisnap" "--capture-region"; }
+```
+
+Leave `CTRL+Shift+2` and `CTRL+Shift+3` as Niri screen and window shots unless you want those on Nirisnap too.
+
+Then validate:
+
+```bash
+niri validate
+```
+
+Niri hot-reloads a valid config. Press `Ctrl+Shift+1` to open the region overlay.
+
+If the key does nothing, Niri cannot find `nirisnap` on `PATH`. Put `~/.local/bin` on `PATH`, or spawn the full path `~/.local/bin/nirisnap`.
+
+Do not also `include` the copied snippet while the same key remains in `keybinds.kdl`. That is a duplicate bind. The file at `~/.local/share/nirisnap/nirisnap-keybinds.kdl` is a reference copy of the replacement line.
+
+### If `qs` fails after a Qt upgrade
+
+`noctalia-qs` links Qt **private** APIs. A `qt6-base` / `qt6-declarative` upgrade can break `/usr/bin/qs` until CachyOS rebuilds the package.
+
+Symptom:
+
+```text
+qs: symbol lookup error: qs: undefined symbol: … version Qt_6_PRIVATE_API
+```
+
+`sudo pacman -S noctalia-qs` reinstalls the same broken binary. Do not do that until the repo version is newer than your Qt.
+
+Rebuild the tagged `noctalia-qs` that CachyOS ships (today: `v0.0.12`) against the installed Qt:
+
+```bash
+sudo pacman -S --needed cli11 wayland-protocols vulkan-headers cmake ninja pkgconf \
+  qt6-base qt6-declarative qt6-wayland qt6-svg qt6-shadertools jemalloc
+
+git clone --depth 1 --branch v0.0.12 --recurse-submodules \
+  https://github.com/noctalia-dev/noctalia-qs.git
+cd noctalia-qs
+
+cmake -GNinja -B build \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+  -DCMAKE_INSTALL_PREFIX=/usr \
+  -DINSTALL_QML_PREFIX=lib/qt6/qml \
+  -DDISTRIBUTOR="CachyOS local Qt rebuild" \
+  -DUSE_JEMALLOC=ON \
+  -DCRASH_HANDLER=OFF
+
 cmake --build build --parallel
-cmake --install build
+sudo cmake --install build
+qs --version
+qs kill -c noctalia-shell
+qs -d -c noctalia-shell
 ```
 
-The install step places:
+This overwrites `/usr/bin/qs`. A later `pacman -S noctalia-qs` from an unfixed repo will restore the broken binary. Rebuild again, or wait for CachyOS to publish a package built against the new Qt.
 
-- `~/.local/bin/omasnap`
-- `~/.local/share/applications/omasnap.desktop`
-- `~/.local/share/licenses/omasnap/Neucha-OFL.txt`
+## CLI
 
-Ensure `~/.local/bin` is on `PATH`, then verify the installed CLI:
+Default region capture:
 
 ```bash
-omasnap --version
-omasnap --help
+nirisnap
+nirisnap --capture-region
 ```
 
-## CLI capture modes
-
-Running without arguments opens freeform region selection:
+Native window picker and full focused monitor:
 
 ```bash
-omasnap
+nirisnap --capture-window
+nirisnap --capture-fullscreen
 ```
 
-Explicit starting modes:
+Positional capture names remain available:
 
 ```bash
-omasnap --capture-region
-omasnap --capture-window
-omasnap --capture-fullscreen
+nirisnap region
+nirisnap windows
+nirisnap fullscreen
+nirisnap smart
 ```
 
-Compatibility positional names are also accepted:
+Quick output skips the annotation editor:
 
 ```bash
-omasnap region
-omasnap windows
-omasnap fullscreen
-omasnap smart       # maps to region selection
+nirisnap --capture-region --copy
+nirisnap --capture-window --save
+nirisnap --capture-fullscreen --copy --save
 ```
 
-These options choose what is initially selected; the editor still controls whether the
-result is copied, saved, or both.
+Edit a file or clipboard image:
 
-Quick output skips the annotation editor. Add `--copy` to copy only, `--save` to save
-only, or both flags to copy and save. Region and window captures output after selection;
-fullscreen captures output immediately. Quick output cannot be combined with `--file`,
-`--clipboard`, or `--pin`.
+```bash
+nirisnap ~/Pictures/Screenshots/capture.png
+nirisnap --file /path/to/capture.png
+nirisnap --clipboard
+```
 
-### One instance, toggled by the same hotkey
+Environment overrides:
 
-Only one capture overlay runs at a time, guarded by a lock file in the runtime snapshot
-directory. Starting omasnap while an overlay is open sends the running instance `SIGTERM`,
-which it handles with a clean Qt shutdown; the new process then exits without capturing.
-Pressing `PRINT` therefore opens the overlay and pressing it again dismisses it.
+```bash
+NIRISNAP_SCREENSHOT_DIR="$HOME/Pictures/Captures" nirisnap
+NIRISNAP_OCR_LANGS="eng+deu" nirisnap
+```
 
-Every capture invocation dismisses this way, quick output included: `--copy`/`--save`
-while an overlay is open closes the overlay and outputs nothing, rather than screenshotting
-the overlay that is still on screen.
-
-Editing an existing image is never cancelled this way: `--file`, `--clipboard`, or an
-image path stops the running instance, waits up to two seconds for the lock, and opens the
-editor on that image. That is how a pin's Edit button and a notification click always land
-in the editor.
-
-A lock left behind by a crashed instance is removed and reclaimed. A lock file that cannot
-be read or written at all is reported on stderr instead of being mistaken for a running
-instance.
+OCR language values use three-letter Tesseract codes joined by `+`. Install matching Tesseract language packages first.
 
 Exit codes:
 
 | Code | Meaning |
 |---|---|
-| `0` | Success, including dismissing a running overlay |
-| `1` | Capture, image, or single-instance lock failure |
-| `2` | Usage error |
-
-### Edit an existing or clipboard image
-
-Point omasnap at any readable image and it opens straight into the annotation editor
-with the whole image selected, skipping the screen-capture step:
-
-```bash
-omasnap ~/Pictures/Screenshots/screenshot-2026-08-11_10-00-00.png
-# or
-omasnap --file /path/to/capture.png
-```
-
-To open the image currently on the Wayland clipboard:
-
-```bash
-omasnap --clipboard
-```
-
-The clipboard must offer readable image data. Text-only clipboard contents return an
-error instead of opening an empty editor.
-
-File URLs are accepted too. A saved capture notification's "Click to edit" action launches
-`omasnap` on the finished screenshot, so it can be reopened and re-annotated. Captures copied
-without saving are not retained on disk and therefore have no delayed edit action.
-
-Environment overrides:
-
-```bash
-OMASNAP_SCREENSHOT_DIR="$HOME/Pictures/Captures" omasnap
-OMASNAP_OCR_LANGS="eng+deu" omasnap
-# Thai plus English:
-OMASNAP_OCR_LANGS="tha+eng" omasnap
-```
-
-Install the corresponding Tesseract language data before adding a language to
-`OMASNAP_OCR_LANGS`. When unset, omasnap falls back to Omarchy's
-`OMARCHY_OCR_LANGS` (which commonly includes the user's script, e.g.
-`tha+eng`), then to `eng`.
+| `0` | Success, including dismissing an open overlay |
+| `1` | Capture, image, or single-instance failure |
+| `2` | CLI usage error |
 
 ## Controls
 
@@ -239,114 +236,78 @@ Install the corresponding Tesseract language data before adding a language to
 
 | Input | Action |
 |---|---|
-| Drag | Select a region |
-| `Space` | Toggle region/window selection |
-| `SUPER + Arrow` | Move among windows in window mode |
-| `Enter` | Capture the highlighted window |
-| `Ctrl+A` | Select the full focused monitor |
-| `Esc`, `Esc` | Dismiss |
+| Drag | Select region |
+| `Space` | Toggle region/floating-window selection when Niri reports window geometry |
+| `Super` + Arrow | Move among selectable floating windows |
+| `Enter` | Capture highlighted window |
+| `Ctrl+A` | Select full focused monitor |
+| `Esc` | Dismiss |
+
+Use `--capture-window` or Noctalia's **Window** action for Niri's native tiled-window picker.
 
 ### Annotation editor
 
 | Input | Action |
 |---|---|
-| `V` | Select/move/resize layers; drag empty canvas for a marquee; wheel scales the selected layer |
+| `V` | Select/move/resize; wheel scales selected layer |
 | `A` | Arrow |
-| `S` | Spotlight/loupe; press again to cycle ellipse, rectangle, rounded |
+| `S` | Spotlight/loupe; press again to cycle shape |
 | `L` | Straight line |
 | `F` | Freehand stroke |
-| `I` | Eyedropper in the color popover · sample the image as the custom color |
+| `I` | Eyedropper from color popover |
 | `C` | Numbered marker |
 | `R` | Rectangle |
-| `D` | Redact; press again to toggle randomized pixelation or solid redaction |
-| `T` | Neucha text |
-| `O` | Drag an OCR region and copy recognized text |
+| `D` | Redact; press again to toggle mosaic/solid |
+| `T` | Text |
+| `O` | OCR selected region to clipboard |
 | `B` | Cycle backdrop |
 | `1`–`6` | Set annotation color |
-| Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size |
-| Hold `Shift` while dragging | Make rectangles and spotlights 1:1; snap lines and arrows to 45° |
-| Double-click text | Reopen text editing |
+| Wheel | Scale selection, spotlight magnification, or active tool size |
+| `Shift` + drag | Square shapes or 45° line/arrow snapping |
+| Double-click text | Reopen text editor |
 | `Delete` | Delete selected layer |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Shift+Z`, `Ctrl+Y` | Redo |
-| `Ctrl+C` | Copy PNG only |
-| `Ctrl+S` | Save PNG only |
+| `Ctrl+C` | Copy PNG |
+| `Ctrl+S` | Save PNG |
 | `Enter` | Copy and save |
-| `P` | Pin the capture on screen and close the editor |
+| `P` | Pin capture and close editor |
 | `Esc` | Return to Select; press again to close |
-| Right-click | Return to Select; cancel active drawing |
+| Right click | Return to Select or cancel drawing |
 
 ### Pinned captures
 
-`P` renders the current capture, writes it to a `pin-<pid>-<n>-<random>.png` under
-the runtime snapshot directory, and launches the same `omasnap` executable in
-detached pin mode. Active pins stack from the bottom-right and can be dragged
-by the image background. The layer stays visible on every workspace without
-compositor window rules. It preserves the image
-aspect ratio, with a maximum width of one third of the screen and a maximum height of one
-half.
-
-Pinning neither touches the clipboard nor writes to the screenshot directory; it is a
-fourth output alongside copy, save, and copy-and-save. `P` closes the editor and releases
-the single-instance lock immediately. Pins from separate captures accumulate as independent
-processes.
-
-Hover the pin to reveal its controls:
-
-| Input on a pin | Action |
+| Input | Action |
 |---|---|
-| Edit button | Reopen the full-resolution PNG in Omasnap and replace the pin |
-| Link button | Copy the source file path |
-| Copy button, `Ctrl+C` | Copy the full-resolution PNG |
-| Double-wide top-left drag handle | Drag the PNG into a file-capable drop target |
-| Wheel | Resize within the screen caps, preserving aspect ratio |
-| Close button, `Esc`, middle-click | Close |
+| Drag image | Move pin |
+| Wheel | Resize while preserving aspect ratio |
+| Edit button | Reopen full-resolution PNG in Nirisnap |
+| Link button | Copy source path |
+| Copy button, `Ctrl+C` | Copy full-resolution PNG |
+| Drag handle | Drag PNG into a file-capable target |
+| Close button, `Esc`, middle click | Close pin |
 
-Image and path copying use `wl-copy` rather than `QClipboard`, so clipboard data remains
-available after the pin is closed. No font-based symbol set or compositor-specific window
-rule is required; the controls use the same vector icon renderer as the annotation toolbar.
+Pins live on every workspace through layer-shell; no Niri window rule is required.
 
-Creation tools return to Select after one placement without selecting the new layer. In
-Select mode, arrows and lines show only their two endpoint handles; other layers show a
-selection boundary. The eight blue/white handles outside the image recrop its corners or
-edges.
-
-## Development and verification
+## Development
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
-QT_QPA_PLATFORM=offscreen \
-  ./build/omasnap-smoke /tmp/omasnap-smoke
+QT_QPA_PLATFORM=offscreen ./build/nirisnap-smoke /tmp/nirisnap-smoke
+python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-The smoke executable exercises region/window/fullscreen startup modes, capture selection,
-temporary snapshot updates, annotation tools, undo/redo, vector movement and scaling,
-text editing, OCR, native-DPI output, endpoint-only line selection, and external crop
-handles.
+Full local gate:
 
-`.github/workflows/build-linux.yml` performs the same release build and interaction smoke
-in an Arch Linux container, stages the CMake installation, and uploads a versioned Linux
-artifact. A `v*` tag also attaches that artifact to the corresponding GitHub release.
+```bash
+make check
+```
 
-## Acknowledgements
+## Attribution
 
-The capture and annotation workflow is inspired by three excellent screenshot tools:
+Nirisnap is adapted from [Tobi Lütke's Omasnap](https://github.com/tobi/omasnap) under the MIT License. Original copyright and license text remain in [`LICENSE`](LICENSE).
 
-- [Shottr](https://shottr.cc/) — fast region/window capture, OCR, and polished backdrops.
-- [Satty](https://github.com/Satty-org/Satty) — a focused, Wayland-native annotation workflow.
-- [Flameshot](https://github.com/flameshot-org/flameshot) — selection-first capture and an
-  approachable annotation toolbar.
+The workflow also draws inspiration from [Shottr](https://shottr.cc/), [Satty](https://github.com/Satty-org/Satty), and [Flameshot](https://github.com/flameshot-org/flameshot).
 
-Thanks to their authors and contributors for establishing the interaction patterns that made
-this project possible. Omasnap is an independent implementation and is not
-affiliated with those projects.
-
-## Project history
-
-This standalone repository was extracted with `git filter-repo` from the original Omarchy
-system-customization repository. The former `omasnap/` directory was promoted to
-the repository root while retaining its relevant commit history.
-
-The bundled Neucha font is distributed under the SIL Open Font License; its license is in
-`assets/OFL.txt` and is installed with the application.
+Bundled Neucha font is distributed under the SIL Open Font License in [`assets/OFL.txt`](assets/OFL.txt).

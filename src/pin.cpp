@@ -98,7 +98,7 @@ class PinWindow final : public QWidget {
 public:
   explicit PinWindow(QImage image, QString path)
       : image_(std::move(image)), path_(std::move(path)), snapshotFile_(path_) {
-    setWindowTitle(QStringLiteral("omasnap-pin"));
+    setWindowTitle(QStringLiteral("nirisnap-pin"));
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground);
     resize(initialSize());
@@ -241,7 +241,7 @@ protected:
   void reopenInEditor() {
     if (!QProcess::startDetached(QCoreApplication::applicationFilePath(),
                                  {path_}))
-      showToast(QStringLiteral("Could not start omasnap"));
+      showToast(QStringLiteral("Could not start nirisnap"));
     else {
       snapshotFile_.preserveForEditor();
       close();
@@ -346,7 +346,7 @@ private:
     case 2:
       return QStringLiteral("Copy file path");
     case 3:
-      return QStringLiteral("Edit in omasnap");
+      return QStringLiteral("Edit in nirisnap");
     case 4:
       return QStringLiteral("Drag this image out");
     default:
@@ -426,13 +426,13 @@ private:
 int runPinnedCapture(const QString &path) {
   QImage image(path);
   if (image.isNull()) {
-    qWarning("omasnap: could not load pinned image %s", qUtf8Printable(path));
+    qWarning("nirisnap: could not load pinned image %s", qUtf8Printable(path));
     return 1;
   }
 
   PinWindow window(std::move(image), path);
   if (!window.hasPinLock()) {
-    qWarning("omasnap: could not lock pinned image %s", qUtf8Printable(path));
+    qWarning("nirisnap: could not lock pinned image %s", qUtf8Printable(path));
     return 1;
   }
   static_cast<void>(window.winId());
@@ -440,11 +440,11 @@ int runPinnedCapture(const QString &path) {
   LayerShellQt::Window *layer =
       handle ? LayerShellQt::Window::get(handle) : nullptr;
   if (!handle || !layer) {
-    qCritical("omasnap: could not create pinned layer surface");
+    qCritical("nirisnap: could not create pinned layer surface");
     return 1;
   }
 
-  layer->setScope(QStringLiteral("omasnap-pin"));
+  layer->setScope(QStringLiteral("nirisnap-pin"));
   LayerShellQt::Window::Anchors anchors;
   anchors.setFlag(LayerShellQt::Window::AnchorBottom);
   anchors.setFlag(LayerShellQt::Window::AnchorRight);

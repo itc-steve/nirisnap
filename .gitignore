@@ -1,3 +1,5 @@
 build/
 stage/
+__pycache__/
+*.pyc
 *.tar.gz

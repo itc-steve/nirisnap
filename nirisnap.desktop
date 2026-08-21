@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Omasnap
+Name=Nirisnap
 Comment=Capture and annotate a screenshot
-Exec=omasnap
+Exec=nirisnap
 Icon=camera-photo
 Terminal=false
 NoDisplay=true

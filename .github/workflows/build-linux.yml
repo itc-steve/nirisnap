@@ -7,7 +7,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   archlinux:
@@ -20,13 +20,23 @@ jobs:
         run: >-
           pacman -Syu --noconfirm --needed
           base-devel cmake ninja pkgconf qt6-base layer-shell-qt
-          wayland wayland-protocols tesseract tesseract-data-eng
+          tesseract tesseract-data-eng python
 
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Check installer scripts
-        run: bash -n install-omarchy
+      - name: Check scripts and contracts
+        run: |
+          bash -n packaging/install-local.sh
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- python3 -m unittest discover -s tests -p 'test_*.py' -v
+          runuser -u builder -- env \
+            HOME=/home/builder \
+            XDG_CONFIG_HOME=/home/builder/.config \
+            XDG_CACHE_HOME=/home/builder/.cache \
+            NIRISNAP_PREFIX=/home/builder/.local \
+            ./packaging/install-local.sh --check
 
       - name: Configure release build
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -37,28 +47,38 @@ jobs:
       - name: Run interaction smoke
         env:
           QT_QPA_PLATFORM: offscreen
-        run: ./build/omasnap-smoke /tmp/omasnap-smoke
+        run: ./build/nirisnap-smoke /tmp/nirisnap-smoke
 
       - name: Stage installation
         run: cmake --install build --prefix "$PWD/stage/usr"
 
       - name: Package Linux artifact
         run: |
-          version="$(QT_QPA_PLATFORM=offscreen ./build/omasnap --version | cut -d' ' -f2)"
-          archive="omasnap-${version}-archlinux-x86_64.tar.gz"
-          echo "CAPTURE_ARCHIVE=${archive}" >> "$GITHUB_ENV"
-          echo "CAPTURE_ARTIFACT=${archive%.tar.gz}" >> "$GITHUB_ENV"
+          version="$(QT_QPA_PLATFORM=offscreen ./build/nirisnap --version | awk 'NR == 1 {print $2}')"
+          archive="nirisnap-${version}-archlinux-x86_64.tar.gz"
           tar -C stage -czf "$archive" .
+          echo "CAPTURE_ARCHIVE=${archive}" >> "$GITHUB_ENV"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.CAPTURE_ARTIFACT }}
+          name: nirisnap-archlinux-x86_64
           path: ${{ env.CAPTURE_ARCHIVE }}
           if-no-files-found: error
 
-      - name: Attach artifact to tagged release
-        if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: archlinux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nirisnap-archlinux-x86_64
+
+      - name: Attach artifact to release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.CAPTURE_ARCHIVE }}
+          files: nirisnap-*.tar.gz

@@ -17,6 +17,7 @@
 #include <QUrl>
 #include <QWindow>
 
+#include <atomic>
 #include <csignal>
 #include <cerrno>
 #include <sys/socket.h>
@@ -25,7 +26,9 @@
 namespace {
 class PosixSignalNotifier final : public QObject {
 public:
-  explicit PosixSignalNotifier(QObject *parent = nullptr) : QObject(parent) {
+  explicit PosixSignalNotifier(std::atomic_bool &termination,
+                               QObject *parent = nullptr)
+      : QObject(parent), termination_(termination) {
     if (::socketpair(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0,
                      fds_) != 0)
       return; // Default signal disposition stays in effect.
@@ -55,6 +58,7 @@ public:
       char bytes[32];
       while (::read(fds_[1], bytes, sizeof(bytes)) > 0) {
       }
+      termination_.store(true, std::memory_order_release);
       QCoreApplication::quit();
     });
   }
@@ -78,6 +82,7 @@ private:
     }
   }
 
+  std::atomic_bool &termination_;
   static inline int fds_[2]{-1, -1};
   static inline volatile sig_atomic_t signalFd_ = -1;
   struct sigaction previousSigint_{};
@@ -89,24 +94,24 @@ private:
 } // namespace
 
 int main(int argc, char **argv) {
-  QCoreApplication::setApplicationName(QStringLiteral("omasnap"));
-  QCoreApplication::setApplicationVersion(QString::fromLatin1(OMASNAP_VERSION));
-  QCoreApplication::setOrganizationName(QStringLiteral("Omarchy"));
+  QCoreApplication::setApplicationName(QStringLiteral("nirisnap"));
+  QCoreApplication::setApplicationVersion(QString::fromLatin1(NIRISNAP_VERSION));
+  QCoreApplication::setOrganizationName(QStringLiteral("Nirisnap"));
   qputenv("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell");
-  QGuiApplication::setDesktopFileName(QStringLiteral("omasnap"));
+  QGuiApplication::setDesktopFileName(QStringLiteral("nirisnap"));
   QApplication application(argc, argv);
-  PosixSignalNotifier signalNotifier(&application);
 
   QCommandLineParser parser;
   parser.setApplicationDescription(QStringLiteral(
-      "Native Wayland screenshot and annotation overlay for Hyprland and "
-      "Omarchy.\n"
+      "Native Wayland screenshot and annotation overlay for Niri.\n"
       "\n"
-      "Only one capture overlay runs at a time. Starting omasnap again while "
+      "Only one capture overlay runs at a time. Starting nirisnap again while "
       "an\noverlay is open dismisses it: the running instance is asked to "
       "quit and the\nnew process exits without capturing, so the same hotkey "
-      "opens and closes the\noverlay. Quick output (--copy, --save) dismisses "
-      "it the same way instead of\nscreenshotting the overlay. With --file (or "
+      "opens and closes the\noverlay. Niri cannot dismiss --capture-window "
+      "picking through IPC; after a\nsecond invocation or signal, press Escape "
+      "or click to resolve it. Quick output\n(--copy, --save) dismisses "
+      "the overlay instead of screenshotting it. With --file (or "
       "an image path) or --clipboard, the running\ninstance is stopped and "
       "the editor opens on that image instead.\n"
       "\n"
@@ -228,6 +233,8 @@ int main(int argc, char **argv) {
     return 2;
   }
   const bool editingImage = clipboardInput || !filePath.isEmpty();
+  const bool nativeWindowCapture =
+      !editingImage && captureMode == CaptureEditor::CaptureMode::Window;
   if (editingImage && quickOutputMode != QuickOutputMode::None) {
     qCritical()
         << "Quick output options cannot be combined with an image input";
@@ -243,7 +250,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   QLockFile instanceLock(
-      QDir(runtime).filePath(QStringLiteral("omasnap.instance")));
+      QDir(runtime).filePath(QStringLiteral("nirisnap.instance")));
   // Every capture, quick output included, dismisses a running overlay instead
   // of starting a second one: grim would otherwise photograph that overlay.
   // Editing an image always takes over so the requested editor can open.
@@ -251,7 +258,7 @@ int main(int argc, char **argv) {
       instanceLock, editingImage ? InstanceMode::EditFile
                                  : InstanceMode::Capture);
   if (lockResult.signalledPid != 0)
-    qInfo().noquote() << QStringLiteral("Asked the running omasnap (pid %1) to "
+    qInfo().noquote() << QStringLiteral("Asked the running nirisnap (pid %1) to "
                                         "quit")
                              .arg(lockResult.signalledPid);
   if (!lockResult.proceed) {
@@ -259,6 +266,9 @@ int main(int argc, char **argv) {
       qCritical().noquote() << lockResult.error;
     return lockResult.exitCode;
   }
+
+  std::atomic_bool terminationRequested{false};
+  PosixSignalNotifier signalNotifier(terminationRequested, &application);
 
   CaptureData capture;
   QString error;
@@ -296,6 +306,42 @@ int main(int argc, char **argv) {
                              .arg(inputName)
                              .arg(image.width())
                              .arg(image.height());
+  } else if (nativeWindowCapture) {
+    WindowTarget window;
+    const CaptureOutcome picked =
+        pickWindowTarget(window, error, &terminationRequested);
+    if (picked == CaptureOutcome::Cancelled)
+      return 0;
+    if (picked == CaptureOutcome::Error) {
+      qCritical().noquote() << error;
+      sendCaptureNotification(QStringLiteral("Screenshot failed: %1").arg(error));
+      return 1;
+    }
+    const CaptureOutcome captured = captureWindowSurface(
+        window, capture.source, error, &terminationRequested);
+    if (captured == CaptureOutcome::Cancelled)
+      return 0;
+    if (captured == CaptureOutcome::Error) {
+      qCritical().noquote() << error;
+      sendCaptureNotification(QStringLiteral("Screenshot failed: %1").arg(error));
+      return 1;
+    }
+    MonitorInfo selectedOutput;
+    QString outputError;
+    if (probeFocusedMonitor(selectedOutput, outputError))
+      capture.monitor.name = selectedOutput.name;
+    capture.previewSize = capture.source.size();
+    capture.monitor.scale = 1.0;
+    capture.monitor.pixelSize = capture.source.size();
+    capture.monitor.geometry = QRect(QPoint(), capture.source.size());
+    if (quickOutputMode != QuickOutputMode::None) {
+      if (!quickOutput(capture.source, quickOutputMode, error)) {
+        qCritical().noquote() << error;
+        return 1;
+      }
+      return 0;
+    }
+    captureMode = CaptureEditor::CaptureMode::File;
   } else if (!probeFocusedMonitor(capture.monitor, error)) {
     qCritical().noquote() << error;
     sendCaptureNotification(QStringLiteral("Screenshot failed: %1").arg(error));
@@ -319,7 +365,11 @@ int main(int argc, char **argv) {
     }
   }
 
-  CaptureEditor editor(std::move(capture), captureMode, editorQuickOutput);
+  if (terminationRequested.load(std::memory_order_acquire))
+    return 0;
+
+  CaptureEditor editor(std::move(capture), captureMode, editorQuickOutput,
+                       &terminationRequested);
   if (instantFullscreenOutput)
     editor.setSuppressSnapshots(true);
   QObject::connect(&editor, &CaptureEditor::captureReady, &editor,
@@ -347,10 +397,14 @@ int main(int argc, char **argv) {
                        QCoreApplication::quit();
                        return;
                      }
+                     const QString workspace = data.monitor.workspaceId
+                                                   ? QString::number(
+                                                         *data.monitor.workspaceId)
+                                                   : QStringLiteral("unknown");
                      qInfo().noquote() << QStringLiteral(
                          "Captured %1 workspace %2 with %3 selectable windows")
                                               .arg(data.monitor.name)
-                                              .arg(data.monitor.workspaceId)
+                                              .arg(workspace)
                                               .arg(data.windows.size());
                    });
 
@@ -364,7 +418,7 @@ int main(int argc, char **argv) {
       qCritical() << "Could not create capture overlay layer";
       return 1;
     }
-    layerWindow->setScope(QStringLiteral("omasnap"));
+    layerWindow->setScope(QStringLiteral("nirisnap"));
     layerWindow->setScreen(targetScreen);
     layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
     LayerShellQt::Window::Anchors anchors;
@@ -381,7 +435,7 @@ int main(int argc, char **argv) {
     editor.setFocus(Qt::ActiveWindowFocusReason);
   }
 
-  if (!editingImage) {
+  if (!editingImage && !nativeWindowCapture) {
     // The quick fullscreen path never shows the overlay, so it never needs the
     // window list that only window-mode hover consumes.
     editor.startCapture(captureMode, !instantFullscreenOutput);

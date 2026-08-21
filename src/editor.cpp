@@ -242,10 +242,12 @@ QPointF constrainedCreationEndpoint(CaptureEditor::Tool tool,
 }
 
 CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
-                             QuickOutputMode quickOutput, QWidget *parent)
+                             QuickOutputMode quickOutput,
+                             const std::atomic_bool *termination,
+                             QWidget *parent)
     : QWidget(parent), capture_(std::move(capture)),
-      quickOutputMode_(quickOutput) {
-  setWindowTitle(QStringLiteral("Omasnap"));
+      quickOutputMode_(quickOutput), termination_(termination) {
+  setWindowTitle(QStringLiteral("Nirisnap"));
   setWindowFlags(Qt::Window | Qt::FramelessWindowHint |
                  Qt::WindowStaysOnTopHint);
   setAttribute(Qt::WA_TranslucentBackground);
@@ -346,7 +348,9 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   connect(&windowWatcher_, &QFutureWatcher<WindowJob>::finished, this, [this] {
     windowPending_ = false;
     const WindowJob job = windowWatcher_.result();
-    if (!job.ok) {
+    if (job.outcome == CaptureOutcome::Cancelled)
+      return;
+    if (job.outcome == CaptureOutcome::Error) {
       setStatus(QStringLiteral("Window capture failed · %1 · choose another")
                     .arg(job.error));
       update();
@@ -407,6 +411,8 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
 }
 
 CaptureEditor::~CaptureEditor() {
+  if (windowWatcher_.isRunning())
+    windowWatcher_.waitForFinished();
   // Never remove the working snapshot under an in-flight write; drain the
   // current render (dropping any coalesced follow-up) before cleanup.
   snapshotDirty_ = false;
@@ -1083,10 +1089,12 @@ void CaptureEditor::startWindowCleanCapture(int index) {
   setStatus(QStringLiteral("Capturing clean window surface…"));
   QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
   windowPending_ = true;
-  windowWatcher_.setFuture(QtConcurrent::run([target] {
+  const std::atomic_bool *termination = termination_;
+  windowWatcher_.setFuture(QtConcurrent::run([target, termination] {
     WindowJob job;
     job.scaledSize = target.rect.size();
-    job.ok = captureWindowSurface(target, job.image, job.error);
+    job.outcome =
+        captureWindowSurface(target, job.image, job.error, termination);
     return job;
   }));
 }

@@ -1,0 +1,5 @@
+// CachyOS Niri ships Ctrl+Shift+1 as `{ screenshot; }` in cfg/keybinds.kdl.
+// Replace that line with the bind below. Do not add a second copy of the same key.
+binds {
+    CTRL+Shift+1 repeat=false hotkey-overlay-title="Screenshot: Nirisnap" { spawn "nirisnap" "--capture-region"; }
+}

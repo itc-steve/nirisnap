@@ -19,10 +19,10 @@ class CaptureEditor final : public QWidget {
 public:
   enum class CaptureMode { Region, Window, Fullscreen, File };
 
-  explicit CaptureEditor(CaptureData capture,
-                         CaptureMode mode = CaptureMode::Region,
-                         QuickOutputMode quickOutput = QuickOutputMode::None,
-                         QWidget *parent = nullptr);
+  explicit CaptureEditor(
+      CaptureData capture, CaptureMode mode = CaptureMode::Region,
+      QuickOutputMode quickOutput = QuickOutputMode::None,
+      const std::atomic_bool *termination = nullptr, QWidget *parent = nullptr);
   ~CaptureEditor() override;
 
 signals:
@@ -240,7 +240,7 @@ private:
   CaptureMode pendingMode_ = CaptureMode::Region;
   // Background clean window surface capture.
   struct WindowJob {
-    bool ok = false;
+    CaptureOutcome outcome = CaptureOutcome::Error;
     QImage image;
     QSize scaledSize;
     QString error;
@@ -262,6 +262,7 @@ private:
   bool dragChanged_ = false;
   QString snapshotPath_;
   QuickOutputMode quickOutputMode_ = QuickOutputMode::None;
+  const std::atomic_bool *termination_ = nullptr;
   int pinCount_ = 0;
   QString status_ =
       QStringLiteral("Drag to select an area · Space selects a window");

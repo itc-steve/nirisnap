@@ -1,0 +1,32 @@
+{
+  "id": "nirisnap",
+  "name": "Nirisnap",
+  "version": "0.1.0",
+  "minNoctaliaVersion": "4.4.3",
+  "author": "Nirisnap contributors",
+  "license": "MIT",
+  "repository": "https://github.com/itc-steve/nirisnap",
+  "description": "Niri screenshot and annotation launcher.",
+  "tags": [
+    "Bar",
+    "Panel",
+    "Utility",
+    "Niri"
+  ],
+  "entryPoints": {
+    "main": "Main.qml",
+    "barWidget": "BarWidget.qml",
+    "panel": "Panel.qml",
+    "settings": "Settings.qml"
+  },
+  "dependencies": {
+    "plugins": []
+  },
+  "metadata": {
+    "defaultSettings": {
+      "defaultMode": "region",
+      "outputMode": "edit",
+      "iconColor": "none"
+    }
+  }
+}

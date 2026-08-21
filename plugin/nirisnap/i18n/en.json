@@ -1,0 +1,33 @@
+{
+  "widget": {
+    "tooltip": "Nirisnap — {mode} · {output}"
+  },
+  "panel": {
+    "title": "Nirisnap",
+    "description": "Capture and annotate",
+    "region": "Region",
+    "window": "Window",
+    "fullscreen": "Full monitor",
+    "clipboard": "Edit clipboard image",
+    "output": "Output"
+  },
+  "settings": {
+    "default_mode_label": "Default capture",
+    "default_mode_desc": "Capture mode used by the bar button and the IPC toggle.",
+    "output_label": "Output after capture",
+    "output_desc": "What happens when a capture is finished.",
+    "icon_color_label": "Bar icon color",
+    "icon_color_desc": "Tint of the bar camera icon. None follows the shell theme."
+  },
+  "mode": {
+    "region": "Region",
+    "window": "Window",
+    "fullscreen": "Full monitor"
+  },
+  "output": {
+    "edit": "Edit",
+    "copy": "Copy",
+    "save": "Save",
+    "copy-save": "Copy + save"
+  }
+}

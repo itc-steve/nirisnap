@@ -7,18 +7,18 @@ CMAKE ?= cmake
 CLANG_TIDY ?= clang-tidy
 CLAZY ?= clazy-standalone
 QMLLINT ?= qmllint
+PYTHON ?= python3
 
 LINT_SOURCES := \
 	src/main.cpp src/capture.cpp src/editor.cpp src/surface-capture.cpp \
 	src/cli-path.cpp src/icons.cpp src/pin.cpp src/pin-file.cpp \
 	src/pin-layout.cpp src/eyedropper.cpp src/instance-lock.cpp \
 	tests/editor-smoke.cpp tests/transform-smoke.cpp \
-	tests/clipboard-smoke.cpp \
-	tests/surface-capture-smoke.cpp tests/pin-layout-smoke.cpp \
+	tests/clipboard-smoke.cpp tests/pin-layout-smoke.cpp \
 	tests/pin-lifecycle-smoke.cpp tests/instance-lock-smoke.cpp
 LINT_CHECKS ?= -*,clang-analyzer-*,bugprone-*,performance-*,misc-*
 
-.PHONY: all configure build clean install check smoke lint qt-lint
+.PHONY: all configure build clean install check contracts smoke lint qt-lint
 
 all: build
 
@@ -31,8 +31,8 @@ build: configure
 	$(CMAKE) --build $(BUILD_DIR) --parallel
 
 smoke: build
-	QT_QPA_PLATFORM=offscreen ./$(BUILD_DIR)/omasnap-smoke \
-		$(BUILD_DIR)/omasnap-smoke-output
+	QT_QPA_PLATFORM=offscreen ./$(BUILD_DIR)/nirisnap-smoke \
+		$(BUILD_DIR)/nirisnap-smoke-output
 
 lint: build
 	@set -eu; \
@@ -60,13 +60,19 @@ qt-lint: build
 	else \
 		echo "make check: clazy unavailable; skipping Qt-specific clazy pass"; \
 	fi; \
-	if command -v "$(QMLLINT)" >/dev/null 2>&1 && test -d qml; then \
-		"$(QMLLINT)" qml; \
+	if command -v "$(QMLLINT)" >/dev/null 2>&1 && \
+			test -d /etc/xdg/quickshell/noctalia-shell; then \
+		"$(QMLLINT)" -I /etc/xdg/quickshell/noctalia-shell \
+			plugin/nirisnap/*.qml; \
 	else \
-		echo "make check: no QML sources or qmllint unavailable; skipping"; \
+		echo "make check: Noctalia or qmllint unavailable; skipping QML lint"; \
 	fi
 
+contracts:
+	$(PYTHON) -m unittest discover -s tests -p 'test_*.py' -v
+
 check: build
+	$(MAKE) contracts
 	$(MAKE) smoke
 	$(MAKE) lint
 	$(MAKE) qt-lint
