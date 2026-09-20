@@ -2,6 +2,7 @@
 #include "instance-lock.hpp"
 
 #include <QDeadlineTimer>
+#include <QFile>
 #include <QLockFile>
 #include <QThread>
 
@@ -30,6 +31,14 @@ InstanceLockProbe probeLock(QLockFile &lock) {
   return InstanceLockProbe::UnknownError;
 }
 
+/** The holder process's /proc comm name; empty when unreadable. */
+QString readComm(pid_t pid) {
+  QFile comm(QStringLiteral("/proc/%1/comm").arg(pid));
+  if (!comm.open(QIODevice::ReadOnly | QIODevice::Text))
+    return {};
+  return QString::fromLocal8Bit(comm.readAll()).trimmed();
+}
+
 /** Reads the lock holder's pid and whether that process still exists. */
 InstanceHolder readHolder(QLockFile &lock, qint64 &pid) {
   qint64 lockPid = 0;
@@ -39,6 +48,13 @@ InstanceHolder readHolder(QLockFile &lock, qint64 &pid) {
     return InstanceHolder::Unknown;
   pid = lockPid;
   if (::kill(static_cast<pid_t>(lockPid), 0) != 0 && errno == ESRCH)
+    return InstanceHolder::Dead;
+  const QString comm = readComm(static_cast<pid_t>(lockPid));
+  // A reused pid is not this app: report it dead so the caller claims the
+  // stale lock instead of signaling an unrelated process. Unreadable comm
+  // keeps today's behavior.
+  if (!comm.isEmpty() && comm != QStringLiteral("nirisnap") &&
+      comm != QStringLiteral("nirisnap-smoke"))
     return InstanceHolder::Dead;
   return InstanceHolder::Alive;
 }
