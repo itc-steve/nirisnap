@@ -163,6 +163,14 @@ int main(int argc, char **argv) {
   parser.process(application);
 
   QString filePath = parser.value(fileOption);
+  if (parser.isSet(fileOption) && filePath.isEmpty()) {
+    qCritical() << "The --file option requires a non-empty path";
+    return 2;
+  }
+  if (parser.isSet(pinOption) && parser.value(pinOption).isEmpty()) {
+    qCritical() << "The --pin option requires a non-empty path";
+    return 2;
+  }
   const bool clipboardInput = parser.isSet(clipboardOption);
 
   QuickOutputMode quickOutputMode = QuickOutputMode::None;
