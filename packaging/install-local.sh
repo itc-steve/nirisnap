@@ -81,18 +81,22 @@ printf '%s\n' "Will not edit Noctalia settings.json or Niri config."
 
 if "${check}"; then
   announce "Preflight passed"
-  printf 'Would run: sudo pacman -S --needed'
+  printf 'Would run: /usr/bin/sudo -- /usr/bin/pacman -S --needed'
   printf ' %q' "${packages[@]}"
   printf '\n'
   exit 0
 fi
 
-for command in sudo pacman cmake ninja python3 qs niri; do
+[[ -x /usr/bin/sudo && -x /usr/bin/pacman ]] || {
+  echo "/usr/bin/sudo or /usr/bin/pacman not found." >&2
+  exit 1
+}
+for command in cmake ninja python3 qs niri; do
   command -v "${command}" >/dev/null || { echo "${command} not found." >&2; exit 1; }
 done
 
 announce "Installing build and runtime dependencies"
-sudo pacman -S --needed "${packages[@]}"
+/usr/bin/sudo -- /usr/bin/pacman -S --needed "${packages[@]}"
 
 announce "Building Nirisnap"
 cmake -S "${repo_root}" -B "${build_dir}" -G Ninja \

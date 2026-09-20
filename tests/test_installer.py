@@ -30,6 +30,8 @@ class InstallerTest(unittest.TestCase):
             self.assertEqual(sorted(home.rglob("*")), before)
             self.assertIn("Preflight passed", result.stdout)
             self.assertIn("layer-shell-qt", result.stdout)
+            self.assertIn("/usr/bin/sudo -- /usr/bin/pacman", result.stdout)
+            self.assertNotIn("Would run: sudo pacman", result.stdout)
             self.assertNotIn("hypr" + "land", result.stdout.lower())
 
     def test_check_refuses_existing_plugin_directory(self):
