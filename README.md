@@ -259,6 +259,7 @@ Use `--capture-window` or Noctalia's **Window** action for Niri's native tiled-w
 | `R` | Rectangle |
 | `D` | Redact; press again to toggle mosaic/solid |
 | `T` | Text |
+| `X` / Cutout toolbar button | Remove inner strip and join remaining sides |
 | `O` | OCR selected region to clipboard |
 | `B` | Cycle backdrop |
 | `1`–`6` | Set annotation color |
@@ -270,10 +271,17 @@ Use `--capture-window` or Noctalia's **Window** action for Niri's native tiled-w
 | `Ctrl+Shift+Z`, `Ctrl+Y` | Redo |
 | `Ctrl+C` | Copy PNG |
 | `Ctrl+S` | Save PNG |
+| Open in default image app toolbar button (after Save) | Save current PNG and open system-associated image app |
 | `Enter` | Copy and save |
 | `P` | Pin capture and close editor |
-| `Esc` | Return to Select; press again to close |
+| `Esc` | Close overlay immediately, including text, popovers, and active selection/drawing |
 | Right click | Return to Select or cancel drawing |
+
+**Cutout:** select a capture, then click the Cutout toolbar icon (two retained sides, crossed-out strip, and inward join arrows) or press `X`. Drag **vertically** between the top and bottom edges of a full-width horizontal strip; drag **horizontally** between the left and right edges of a full-height vertical strip. The larger drag direction chooses the axis (ties choose horizontal). The red preview marks the entire strip to remove. Release to delete it and join the remaining sides; right-click cancels the drag. Keep some image on both sides: empty, edge-only, and whole-image cuts are rejected. No automatic whitespace detection. Press `V` to return to existing outer crop handles.
+
+Cutout snaps strip boundaries to native pixels without downscaling. It flattens existing annotations and secure redactions into the joined image, **excluding the decorative backdrop**; the backdrop remains separately selectable. Status confirms flattening. `Ctrl+Z` restores the original source and editable layers; `Ctrl+Shift+Z` or `Ctrl+Y` reapplies the cut. New annotations remain editable.
+
+**Open in default image app:** click the image-with-outward-arrow button after Save. Nirisnap saves the current full-resolution crop, annotations, secure redactions, and backdrop to the normal screenshot directory, then starts `xdg-open` with that durable PNG before closing the overlay. Clipboard stays unchanged. If the launcher cannot start, the overlay stays open and reports the saved path. The PNG survives closing Nirisnap either way. The system PNG association chooses the app (for example Pinta); Nirisnap neither hardcodes an app nor changes associations. Launcher startup cannot confirm that the external app ultimately opened the file. External apps do not inherit Nirisnap's layer-shell setting.
 
 ### Pinned captures
 

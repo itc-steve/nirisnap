@@ -22,6 +22,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QThread>
@@ -39,7 +40,7 @@ constexpr std::array<const char *, 6> kColorNames{
     "#ff375f", "#ff9f0a", "#ffd60a", "#30d158", "#0a84ff", "#bf5af2"};
 constexpr std::array<qreal, 3> kTextSizes{2.0, 5.0, 9.0};
 constexpr std::array<const char *, 3> kTextSizeNames{"S", "M", "L"};
-constexpr qreal kToolbarWidth = 760;
+constexpr qreal kToolbarWidth = 880;
 constexpr qreal kMinimumRedactionExtent = 5.0;
 constexpr int kBackdropDim = 143;
 
@@ -104,6 +105,8 @@ QString toolAction(CaptureEditor::Tool tool) {
     return QStringLiteral("tool-ocr");
   case CaptureEditor::Tool::Eyedropper:
     return QStringLiteral("tool-eyedropper");
+  case CaptureEditor::Tool::Cutout:
+    return QStringLiteral("tool-cutout");
   }
   return {};
 }
@@ -632,7 +635,7 @@ QRectF CaptureEditor::colorPaletteRect() const {
   const qreal toolbarX = (width() - toolbarWidth) / 2.0;
   const qreal toolbarY =
       std::max<qreal>(10, editImageRect().top() - buttonHeight - 10);
-  const QRectF anchor(toolbarX + 360 * scale, toolbarY, 36 * scale,
+  const QRectF anchor(toolbarX + 400 * scale, toolbarY, 36 * scale,
                       buttonHeight);
   const qreal paletteWidth = 232;
   const qreal x = std::clamp(anchor.center().x() - paletteWidth / 2.0, 8.0,
@@ -657,7 +660,7 @@ QRectF CaptureEditor::textSizePanelRect() const {
   const qreal toolbarX = (width() - toolbarWidth) / 2.0;
   const qreal toolbarY =
       std::max<qreal>(10, editImageRect().top() - buttonHeight - 10);
-  const QRectF anchor(toolbarX + 320 * scale, toolbarY, 36 * scale,
+  const QRectF anchor(toolbarX + 360 * scale, toolbarY, 36 * scale,
                       buttonHeight);
   return {anchor.center().x() - 51, anchor.bottom() + 6, 102, 34};
 }
@@ -884,7 +887,12 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   add(36, QStringLiteral("copy"), {}, QStringLiteral("Copy only · Ctrl+C"));
   add(40, QStringLiteral("both"), {}, QStringLiteral("Copy and save · Enter"));
   add(36, QStringLiteral("save"), {}, QStringLiteral("Save only · Ctrl+S"));
-  add(36, QStringLiteral("close"), {}, QStringLiteral("Close · Esc twice"));
+  add(36, QStringLiteral("open-app"), {},
+      QStringLiteral("Open in default image app · saves PNG · keeps clipboard"));
+  add(36, QStringLiteral("tool-cutout"), {},
+      QStringLiteral("Cutout · X · drag vertically for horizontal strip, "
+                     "horizontally for vertical strip · release to join"));
+  add(36, QStringLiteral("close"), {}, QStringLiteral("Close · Esc"));
 
   if (colorPaletteOpen_) {
     const QRectF palette = colorPaletteRect();
@@ -913,11 +921,14 @@ void CaptureEditor::setStatus(QString status) {
 }
 
 CaptureEditor::EditState CaptureEditor::editState() const {
-  return {annotations_, backgroundStyle_, selection_, selectedAnnotation_,
-          selectedAnnotations_, nextMarker_};
+  return {capture_,   annotations_,        backgroundStyle_,
+          selection_, selectedAnnotation_, selectedAnnotations_,
+          nextMarker_};
 }
 
 void CaptureEditor::applyEditState(const EditState &state) {
+  capture_ = state.capture;
+  redactionBaseStale_ = true;
   annotations_ = state.annotations;
   backgroundStyle_ = state.backgroundStyle;
   selection_ = state.selection;
@@ -1119,39 +1130,96 @@ void CaptureEditor::enterEdit(QString status) {
 }
 
 void CaptureEditor::handleEscape() {
-  const qint64 closeWindowMs =
-      static_cast<qint64>(QApplication::doubleClickInterval()) * 2;
-  if (escapeTimer_.isValid() && escapeTimer_.elapsed() <= closeWindowMs) {
-    close();
+  textEditor_->hide();
+  close();
+}
+
+QRect CaptureEditor::cutoutStrip(const QPointF &end) const {
+  const QSize pixels = sourceRect(selection_)
+                           .toAlignedRect()
+                           .intersected(capture_.source.rect())
+                           .size();
+  if (pixels.isEmpty() || selection_.isEmpty())
+    return {};
+  const bool horizontal =
+      std::abs(end.y() - dragStart_.y()) >= std::abs(end.x() - dragStart_.x());
+  const qreal extent = horizontal ? selection_.height() : selection_.width();
+  const int nativeExtent = horizontal ? pixels.height() : pixels.width();
+  const qreal first = horizontal ? dragStart_.y() : dragStart_.x();
+  const qreal last = horizontal ? end.y() : end.x();
+  const int begin = qRound(
+      std::clamp(std::min(first, last) / extent, 0.0, 1.0) * nativeExtent);
+  const int finish = qRound(
+      std::clamp(std::max(first, last) / extent, 0.0, 1.0) * nativeExtent);
+  return horizontal ? QRect(0, begin, pixels.width(), finish - begin)
+                    : QRect(begin, 0, finish - begin, pixels.height());
+}
+
+void CaptureEditor::cutout(const QPointF &end) {
+  const QRect strip = cutoutStrip(end);
+  const QSize pixels = sourceRect(selection_)
+                           .toAlignedRect()
+                           .intersected(capture_.source.rect())
+                           .size();
+  const bool horizontal = strip.width() == pixels.width();
+  const int begin = horizontal ? strip.y() : strip.x();
+  const int removed = horizontal ? strip.height() : strip.width();
+  const int extent = horizontal ? pixels.height() : pixels.width();
+  if (strip.isEmpty() || begin <= 0 || begin + removed >= extent) {
+    setStatus(QStringLiteral(
+        "Cutout needs an inner strip with pixels on both sides"));
     return;
   }
-  escapeTimer_.restart();
-  textEditor_->clear();
-  textEditor_->hide();
-  editingAnnotation_ = -1;
-  if (dragStartStateValid_) {
-    applyEditState(dragStartState_);
-    scheduleSnapshot();
+  // Flatten native pixels; keep backdrop separate and redactions baked in.
+  CaptureData native = capture_;
+  native.monitor.scale = 1.0;
+  const QImage flattened =
+      renderCapture(native, selection_, annotations_, BackgroundStyle::None);
+  if (flattened.isNull()) {
+    setStatus(QStringLiteral("Could not render cutout"));
+    return;
   }
-  dragStartStateValid_ = false;
-  dragChanged_ = false;
-  creationConstraintActive_ = false;
-  dragging_ = false;
-  interaction_ = Interaction::None;
-  colorPaletteOpen_ = false;
-  customColorPickerOpen_ = false;
-  freehandPoints_.clear();
-  if (phase_ == Phase::Edit) {
-    tool_ = Tool::Select;
-    setStatus(QStringLiteral("Select/move · Esc again to close"));
+  QImage joined(horizontal ? QSize(pixels.width(), extent - removed)
+                           : QSize(extent - removed, pixels.height()),
+                QImage::Format_ARGB32_Premultiplied);
+  if (joined.isNull()) {
+    setStatus(QStringLiteral("Could not allocate cutout"));
+    return;
+  }
+  QPainter painter(&joined);
+  painter.setCompositionMode(QPainter::CompositionMode_Source);
+  if (horizontal) {
+    painter.drawImage(QPoint(0, 0), flattened,
+                      QRect(0, 0, pixels.width(), begin));
+    painter.drawImage(QPoint(0, begin), flattened,
+                      QRect(0, begin + removed, pixels.width(),
+                            extent - begin - removed));
   } else {
-    windowMode_ = false;
-    selection_ = {};
-    setStatus(QStringLiteral("Area mode · Esc again to close"));
+    painter.drawImage(QPoint(0, 0), flattened,
+                      QRect(0, 0, begin, pixels.height()));
+    painter.drawImage(QPoint(begin, 0), flattened,
+                      QRect(begin + removed, 0, extent - begin - removed,
+                            pixels.height()));
   }
-  setFocus(Qt::OtherFocusReason);
-  updatePointerCursor();
-  update();
+  painter.end();
+  recordEdit();
+  capture_.previewSize = QSize(
+      std::max(1, qRound(joined.width() *
+                         static_cast<qreal>(capture_.previewSize.width()) /
+                         capture_.source.width())),
+      std::max(1, qRound(joined.height() *
+                         static_cast<qreal>(capture_.previewSize.height()) /
+                         capture_.source.height())));
+  capture_.source = std::move(joined);
+  capture_.monitor.scale = 1.0;
+  selection_ = QRectF(QPointF(), capture_.previewSize);
+  annotations_.clear();
+  selectedAnnotations_.clear();
+  selectedAnnotation_ = -1;
+  redactionBaseStale_ = true;
+  setStatus(QStringLiteral(
+      "Strip cut · annotations flattened · Ctrl+Z restores source and layers"));
+  scheduleSnapshot();
 }
 
 void CaptureEditor::chooseWindow(int index) {
@@ -1220,7 +1288,7 @@ void CaptureEditor::acceptText() {
     } else {
       annotations_.push_back(std::move(annotation));
       selectedAnnotation_ = -1;
-      setStatus(QStringLiteral("Text added · Esc for select mode"));
+      setStatus(QStringLiteral("Text added · V selects layers · Esc closes"));
     }
     scheduleSnapshot();
   } else if (editingAnnotation_ >= 0) {
@@ -1318,7 +1386,8 @@ void CaptureEditor::finish(OutputMode mode) {
       return;
     }
   }
-  if (mode == OutputMode::Save || mode == OutputMode::Both) {
+  if (mode == OutputMode::Save || mode == OutputMode::Both ||
+      mode == OutputMode::Open) {
     saved = moveSnapshotToScreenshots(snapshotPath_, error);
     if (saved.isEmpty()) {
       busy_ = false;
@@ -1326,6 +1395,30 @@ void CaptureEditor::finish(OutputMode mode) {
       return;
     }
     snapshotPath_ = saved;
+  }
+
+  if (mode == OutputMode::Open) {
+    // Keep export immutable; further edits after launch failure use runtime.
+    snapshotPath_.clear();
+    QProcess launcher;
+    launcher.setProgram(QStringLiteral("xdg-open"));
+    launcher.setArguments({QFileInfo(saved).absoluteFilePath()});
+    auto environment = QProcessEnvironment::systemEnvironment();
+    // Main injects layer-shell for our overlay, not for external Qt viewers.
+    environment.remove(QStringLiteral("QT_WAYLAND_SHELL_INTEGRATION"));
+    launcher.setProcessEnvironment(environment);
+    // Start before closing: Qt's Wayland URL dispatch can defer until activation.
+    if (!launcher.startDetached()) {
+      busy_ = false;
+      setStatus(QStringLiteral("Could not open default image app · PNG saved: %1")
+                    .arg(saved));
+      sendCaptureNotification(QStringLiteral("Could not open default image app"),
+                              saved);
+      return;
+    }
+    sendCaptureNotification(QStringLiteral("Screenshot saved"), saved);
+    close();
+    return;
   }
 
   if (mode == OutputMode::Copy)
@@ -1341,7 +1434,13 @@ void CaptureEditor::finish(OutputMode mode) {
 void CaptureEditor::handleToolbar(const QString &action) {
   if (action == QStringLiteral("tool-select"))
     tool_ = Tool::Select;
-  else if (action == QStringLiteral("tool-arrow"))
+  else if (action == QStringLiteral("tool-cutout")) {
+    tool_ = Tool::Cutout;
+    selectedAnnotation_ = -1;
+    setStatus(
+        QStringLiteral("Cutout · drag vertically for horizontal strip, "
+                       "horizontally for vertical strip · release to join"));
+  } else if (action == QStringLiteral("tool-arrow"))
     tool_ = Tool::Arrow;
   else if (action == QStringLiteral("tool-line"))
     tool_ = Tool::Line;
@@ -1421,6 +1520,8 @@ void CaptureEditor::handleToolbar(const QString &action) {
     finish(OutputMode::Both);
   else if (action == QStringLiteral("save"))
     finish(OutputMode::Save);
+  else if (action == QStringLiteral("open-app"))
+    finish(OutputMode::Open);
   else if (action == QStringLiteral("close"))
     close();
   updatePointerCursor();
@@ -1521,6 +1622,10 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     scheduleSnapshot();
   } else if (event->key() == Qt::Key_V) {
     tool_ = Tool::Select;
+  } else if (event->key() == Qt::Key_X &&
+             !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier |
+                                    Qt::MetaModifier))) {
+    handleToolbar(QStringLiteral("tool-cutout"));
   } else if (event->key() == Qt::Key_A) {
     tool_ = Tool::Arrow;
   } else if (event->key() == Qt::Key_L) {
@@ -1830,11 +1935,14 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
       if (textEditor_->isVisible())
         acceptText();
       if (dragging_) {
-        handleEscape();
+        cancelActiveDragForHistory();
+        marqueeSelecting_ = false;
+        marqueeRect_ = {};
+        update();
       } else if (tool_ != Tool::Select || selectedAnnotation_ >= 0) {
         tool_ = Tool::Select;
         selectedAnnotation_ = -1;
-        setStatus(QStringLiteral("Select/move · Esc again to close"));
+        setStatus(QStringLiteral("Select/move · Esc closes"));
         updatePointerCursor();
         update();
       }
@@ -2034,7 +2142,7 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     annotation.size = annotationSize_;
     annotations_.push_back(std::move(annotation));
     selectedAnnotation_ = -1;
-    setStatus(QStringLiteral("Marker %1 added · Esc for select mode")
+    setStatus(QStringLiteral("Marker %1 added · V selects layers · Esc closes")
                   .arg(annotation.number));
     scheduleSnapshot();
     updatePointerCursor();
@@ -2127,6 +2235,13 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
                           ? constrainedCreationEndpoint(tool_, dragStart_, rawEnd)
                           : rawEnd;
   creationConstraintActive_ = false;
+  if (tool_ == Tool::Cutout) {
+    dragging_ = false;
+    cutout(rawEnd);
+    updatePointerCursor();
+    update();
+    return;
+  }
   if (tool_ == Tool::Freehand || tool_ == Tool::Highlighter) {
     if (freehandPoints_.isEmpty() ||
         QLineF(freehandPoints_.last(), end).length() >= 1.0)
@@ -2150,8 +2265,9 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
       selectedAnnotation_ = -1;
       setStatus(
           highlighter
-              ? QStringLiteral("Highlight added · Esc for select mode")
-              : QStringLiteral("Stroke added · Esc for select mode"));
+              ? QStringLiteral(
+                    "Highlight added · V selects layers · Esc closes")
+              : QStringLiteral("Stroke added · V selects layers · Esc closes"));
       scheduleSnapshot();
     }
     freehandPoints_.clear();
@@ -2200,10 +2316,12 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
     annotations_.push_back(std::move(annotation));
     selectedAnnotation_ = -1;
     const bool redacted = tool_ == Tool::Redact;
-    setStatus(redacted
-                  ? QStringLiteral("%1 redaction added · Esc for select mode")
-                        .arg(redactionStyleName(redactionStyle_))
-                  : QStringLiteral("Layer added · Esc for select mode"));
+    setStatus(
+        redacted
+            ? QStringLiteral(
+                  "%1 redaction added · V selects layers · Esc closes")
+                  .arg(redactionStyleName(redactionStyle_))
+            : QStringLiteral("Layer added · V selects layers · Esc closes"));
     scheduleSnapshot();
     updatePointerCursor();
   } else if (tool_ == Tool::Redact) {
@@ -2397,7 +2515,7 @@ void CaptureEditor::paintSelect(QPainter &painter) {
                    {{QStringLiteral("Drag"), QStringLiteral("Area")},
                     {QStringLiteral("Space"), QStringLiteral("Window")},
                     {QStringLiteral("Ctrl+A"), QStringLiteral("Fullscreen")},
-                    {QStringLiteral("Esc ×2"), QStringLiteral("Close")}});
+                    {QStringLiteral("Esc"), QStringLiteral("Close")}});
   drawStatusPill(painter, rect(), status_);
 }
 
@@ -2493,7 +2611,8 @@ void CaptureEditor::paintEdit(QPainter &painter) {
         AnnotationLayer::Default)
       defaultAnnotations.push_back(annotations_.at(index));
   }
-  if (dragging_ && tool_ != Tool::Select && tool_ != Tool::Redact) {
+  if (dragging_ && tool_ != Tool::Select && tool_ != Tool::Redact &&
+      tool_ != Tool::Cutout) {
     Annotation preview;
     if (tool_ == Tool::Freehand || tool_ == Tool::Highlighter) {
       preview.kind = tool_ == Tool::Highlighter ? Annotation::Kind::Highlighter
@@ -2542,6 +2661,27 @@ void CaptureEditor::paintEdit(QPainter &painter) {
       paintAnnotation(painter, annotation);
   }
   painter.restore();
+  if (tool_ == Tool::Cutout && dragging_) {
+    const QRect strip = cutoutStrip(toAnnotationPoint(cursor_));
+    const QSize pixels = sourceRect(selection_)
+                             .toAlignedRect()
+                             .intersected(capture_.source.rect())
+                             .size();
+    if (!pixels.isEmpty()) {
+      const QRectF preview(strip.x() * selection_.width() / pixels.width(),
+                           strip.y() * selection_.height() / pixels.height(),
+                           strip.width() * selection_.width() / pixels.width(),
+                           strip.height() * selection_.height() /
+                               pixels.height());
+      painter.setPen(QPen(QColor(QStringLiteral("#ff375f")), 2.0 / editScale(),
+                          Qt::DashLine));
+      painter.setBrush(QColor(255, 55, 95, 85));
+      painter.drawRect(preview);
+      painter.setPen(Qt::white);
+      painter.drawText(preview, Qt::AlignCenter,
+                       QStringLiteral("Remove strip"));
+    }
+  }
   if (tool_ == Tool::Select && marqueeSelecting_ &&
       !marqueeRect_.isEmpty()) {
     const qreal scale = std::max<qreal>(editScale(), 0.01);
@@ -2709,7 +2849,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
        {QStringLiteral("F / H"), QStringLiteral("Freehand / Highlighter")},
        {QStringLiteral("C"), QStringLiteral("Marker")},
        {QStringLiteral("R / D"), QStringLiteral("Rectangle / Redact")},
-       {QStringLiteral("T"), QStringLiteral("Text")},
+       {QStringLiteral("T / X"), QStringLiteral("Text / Cutout strip")},
        {QStringLiteral("Double click"), QStringLiteral("Edit text layer")},
        {QStringLiteral("1–6"), QStringLiteral("Color")},
        {QStringLiteral("Wheel"), QStringLiteral("Zoom selected / tool size")},
@@ -2720,7 +2860,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
        {QStringLiteral("Enter"), QStringLiteral("Copy + save")},
        {QStringLiteral("Ctrl+C"), QStringLiteral("Copy only")},
        {QStringLiteral("Ctrl+S"), QStringLiteral("Save only")},
-       {QStringLiteral("Esc"), QStringLiteral("Arrow / twice close")}});
+       {QStringLiteral("Esc"), QStringLiteral("Close")}});
   if (hoveredButton) {
     drawInstantTooltip(painter, rect(), hoveredButton->rect,
                        hoveredButton->tooltip);

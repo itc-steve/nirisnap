@@ -2,7 +2,6 @@
 
 #include "capture.hpp"
 
-#include <QElapsedTimer>
 #include <QFutureWatcher>
 #include <QLineEdit>
 #include <QPixmap>
@@ -80,12 +79,13 @@ public:
     Redact,
     Text,
     Ocr,
-    Eyedropper
+    Eyedropper,
+    Cutout
   };
 
 private:
   enum class Phase { Select, Edit };
-  enum class OutputMode { Copy, Save, Both };
+  enum class OutputMode { Copy, Save, Both, Open };
   enum class Interaction {
     None,
     Move,
@@ -115,6 +115,7 @@ private:
   };
 
   struct EditState {
+    CaptureData capture;
     QVector<Annotation> annotations;
     BackgroundStyle backgroundStyle = BackgroundStyle::None;
     QRectF selection;
@@ -144,6 +145,8 @@ private:
   [[nodiscard]] QVector<ToolbarButton> toolbarButtons() const;
   [[nodiscard]] QColor annotationColor() const;
 
+  [[nodiscard]] QRect cutoutStrip(const QPointF &end) const;
+  void cutout(const QPointF &end);
   void acceptText();
   void applyCustomColor(const QPointF &position);
   void applyEditState(const EditState &state);
@@ -271,7 +274,6 @@ private:
   QVector<Annotation> originalSelectedAnnotations_;
   QVector<int> selectedAnnotations_;
   qreal textSize_ = 4.0;
-  QElapsedTimer escapeTimer_;
   QColor textColor_;
   QFutureWatcher<OcrResult> ocrWatcher_;
 };

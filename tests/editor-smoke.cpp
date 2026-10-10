@@ -12,6 +12,9 @@
 
 #include <QApplication>
 #include <QBuffer>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QClipboard>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
@@ -78,6 +81,219 @@ bool runBackdropCacheRenderingCheck(QString &error) {
         !matches(dimmed.green(), source.green() * (255 - 143) / 255) ||
         !matches(dimmed.blue(), source.blue() * (255 - 143) / 255)) {
       error = QStringLiteral("Cached selection backdrop changed dimming");
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Cutout joins exact native pixels and Escape closes every editor path. */
+bool runCutoutAndEscapeChecks(QString &error) {
+  CaptureData capture;
+  capture.source = QImage(600, 400, QImage::Format_ARGB32_Premultiplied);
+  for (int y = 0; y < 400; ++y)
+    for (int x = 0; x < 600; ++x)
+      capture.source.setPixelColor(x, y,
+                                   QColor(x % 256, y % 256, (x + y) % 256));
+  capture.previewSize = QSize(480, 320);
+  capture.monitor.scale = 1.25;
+  capture.monitor.geometry = QRect(0, 0, 480, 320);
+  capture.monitor.pixelSize = capture.source.size();
+  const auto drag = [](CaptureEditor &editor, QPoint start, QPoint end) {
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, start);
+    QTest::mouseMove(&editor, end);
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, end);
+    QApplication::processEvents();
+  };
+  for (bool horizontal : {true, false}) {
+    for (bool solid : {true, false}) {
+      CaptureEditor editor(capture, CaptureEditor::CaptureMode::Fullscreen);
+      editor.setSuppressSnapshots(true);
+      editor.resize(800, 600);
+      editor.show();
+      QApplication::processEvents();
+      // Full capture displays at (160,145), with 1.25 native pixels per unit.
+      QTest::keyClick(&editor, Qt::Key_D);
+      if (solid)
+        QTest::keyClick(&editor,
+                        Qt::Key_D); // Redaction crosses retained/cut parts.
+      drag(editor, QPoint(192, 177), QPoint(352, 297));
+      QTest::keyClick(&editor, Qt::Key_R);
+      drag(editor, QPoint(400, 337), QPoint(480, 385));
+      const QImage annotated = editor.renderCurrentOutput();
+      QTest::keyClick(&editor, Qt::Key_B);
+      const QImage decorated = editor.renderCurrentOutput();
+      if (horizontal)
+        QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                          QPoint(738, 118));
+      else
+        QTest::keyClick(&editor, Qt::Key_X);
+      // Click-only and full/edge strips must not mutate image or history.
+      for (const auto &points :
+           {std::pair{QPoint(200, 200), QPoint(200, 200)},
+            std::pair{QPoint(160, 145), QPoint(160, 465)},
+            std::pair{QPoint(160, 145), QPoint(640, 145)},
+            std::pair{QPoint(200, 145), QPoint(200, 225)}}) {
+        drag(editor, points.first, points.second);
+        if (editor.renderCurrentOutput() != decorated) {
+          error = QStringLiteral("Invalid cutout changed pixels");
+          return false;
+        }
+      }
+      const QPoint start = horizontal ? QPoint(300, 225) : QPoint(256, 300);
+      const QPoint end = horizontal ? QPoint(300, 305) : QPoint(352, 300);
+      const QPoint previewPoint =
+          horizontal ? QPoint(620, 260) : QPoint(300, 440);
+      const QColor beforePreview =
+          editor.grab().toImage().pixelColor(previewPoint);
+      QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, end);
+      QTest::mouseMove(&editor,
+                       start); // Reverse drag works, preview spans image.
+      QApplication::processEvents();
+      const QColor preview = editor.grab().toImage().pixelColor(previewPoint);
+      if (preview == beforePreview) {
+        error = QStringLiteral("Cutout did not preview full strip");
+        return false;
+      }
+      QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, start);
+      QApplication::processEvents();
+      QImage joined(horizontal ? QSize(600, 300) : QSize(480, 400),
+                    QImage::Format_ARGB32_Premultiplied);
+      for (int y = 0; y < joined.height(); ++y)
+        for (int x = 0; x < joined.width(); ++x)
+          joined.setPixel(
+              x, y,
+              annotated.pixel(x + (!horizontal && x >= 120 ? 120 : 0),
+                              y + (horizontal && y >= 100 ? 100 : 0)));
+      CaptureData expectedCapture = capture;
+      expectedCapture.source = joined;
+      expectedCapture.previewSize =
+          horizontal ? QSize(480, 240) : QSize(384, 320);
+      expectedCapture.monitor.scale = 1.0;
+      const QImage expected = renderCapture(
+          expectedCapture, QRectF(QPointF(), expectedCapture.previewSize), {},
+          BackgroundStyle::Aurora);
+      if (editor.renderCurrentOutput() != expected ||
+          editor.captureData().source != joined) {
+        error = QStringLiteral("Cutout lost native pixels, annotations, "
+                               "redactions, or backdrop separation");
+        return false;
+      }
+      QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+      if (editor.renderCurrentOutput() != decorated ||
+          editor.captureData().source != capture.source) {
+        error = QStringLiteral("Cutout undo lost source or layers");
+        return false;
+      }
+      QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+      if (editor.renderCurrentOutput() != expected) {
+        error = QStringLiteral("Cutout redo changed output");
+        return false;
+      }
+    }
+  }
+  // Fractional source origins and odd pixel crop extents must not be resampled.
+  for (bool horizontal : {true, false}) {
+    CaptureEditor editor(capture);
+    editor.setSuppressSnapshots(true);
+    editor.resize(800, 600);
+    editor.show();
+    QApplication::processEvents();
+    drag(editor, QPoint(101, 103), QPoint(479, 317));
+    const QImage before = editor.renderCurrentOutput();
+    CaptureData native = capture;
+    native.monitor.scale = 1.0;
+    const QImage cropped = renderCapture(native, QRectF(101, 103, 378, 214), {},
+                                         BackgroundStyle::None);
+    if (cropped.size() != QSize(473, 269)) {
+      error = QStringLiteral("Fractional cutout fixture has wrong native crop");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_X);
+    drag(editor, horizontal ? QPoint(400, 268) : QPoint(291, 300),
+         horizontal ? QPoint(400, 318) : QPoint(341, 300));
+    QImage joined(horizontal ? QSize(473, 206) : QSize(410, 269),
+                  cropped.format());
+    for (int y = 0; y < joined.height(); ++y)
+      for (int x = 0; x < joined.width(); ++x)
+        joined.setPixel(x, y,
+                        cropped.pixel(x + (!horizontal && x >= 100 ? 63 : 0),
+                                      y + (horizontal && y >= 88 ? 63 : 0)));
+    if (editor.renderCurrentOutput() != joined) {
+      error = QStringLiteral(
+          "Fractional crop cutout resampled or misplaced native pixels");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_R);
+    drag(editor, QPoint(400, 270), QPoint(440, 300));
+    const QImage annotated = editor.renderCurrentOutput();
+    if (annotated == joined) {
+      error = QStringLiteral("Could not annotate after cutout");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    if (editor.renderCurrentOutput() != joined) {
+      error = QStringLiteral("Undo after cutout lost joined image");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    if (editor.renderCurrentOutput() != before) {
+      error = QStringLiteral("Fractional cutout undo lost original crop");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+    QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+    if (editor.renderCurrentOutput() != annotated) {
+      error = QStringLiteral("Fractional cutout redo lost new annotation");
+      return false;
+    }
+  }
+  for (int path = 0; path < 9; ++path) {
+    CaptureEditor editor(capture, path == 0 || path == 7
+                                      ? CaptureEditor::CaptureMode::Region
+                                      : CaptureEditor::CaptureMode::Fullscreen);
+    editor.setSuppressSnapshots(true);
+    editor.resize(800, 600);
+    editor.show();
+    QApplication::processEvents();
+    QWidget *target = &editor;
+    if (path == 1) {
+      QTest::keyClick(&editor, Qt::Key_T);
+      QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                        QPoint(300, 300));
+      target = QApplication::focusWidget();
+      QTest::keyClicks(target, QStringLiteral("uncommitted"));
+      QTest::keyClick(target, Qt::Key_A, Qt::ControlModifier);
+      QTest::keyClick(target, Qt::Key_X, Qt::ControlModifier);
+      const auto *inlineText = qobject_cast<QLineEdit *>(target);
+      if (!inlineText || !inlineText->text().isEmpty() ||
+          !target->isVisible()) {
+        error = QStringLiteral("Ctrl+X did not remain native text editing");
+        return false;
+      }
+    } else if (path == 2 || path == 6) {
+      QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                        QPoint(398, 118));
+      if (path == 6)
+        QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                          QPoint(470, 157));
+    } else if (path == 8) {
+      QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier,
+                        QPoint(153, 305));
+      QTest::mouseMove(&editor, QPoint(200, 305));
+    } else if (path >= 3) {
+      QTest::keyClick(&editor, path == 3   ? Qt::Key_X
+                               : path == 4 ? Qt::Key_R
+                                           : Qt::Key_V);
+      QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier,
+                        QPoint(250, 250));
+      QTest::mouseMove(&editor, QPoint(350, 350));
+    }
+    QTest::keyClick(target, Qt::Key_Escape);
+    QApplication::processEvents();
+    if (editor.isVisible()) {
+      error = QStringLiteral("Single Escape did not close editor path %1")
+                  .arg(path);
       return false;
     }
   }
@@ -653,7 +869,6 @@ bool runCrashSnapshotChecks(const CaptureData &capture, QString &error) {
     quitEditor.show();
     annotate(quitEditor);
     QTest::keyClick(&quitEditor, Qt::Key_Escape);
-    QTest::keyClick(&quitEditor, Qt::Key_Escape);
     QCoreApplication::processEvents();
     if (!settleUntilWritten() || quitEditor.isVisible()) {
       error = QStringLiteral("Editing before a quit left no snapshot to clean");
@@ -778,9 +993,9 @@ bool runTextClickAwayCommitCheck(QApplication &application, QString &error) {
 
   const Annotation toolbar =
       textAnnotation({325, 180}, QStringLiteral("Toolbar"));
-  // 118,92 is the arrow tool button: the toolbar row sits above the capture.
+  // 100,92 is the arrow tool button: the toolbar row sits above the capture.
   QTest::keyClicks(QApplication::focusWidget(), toolbar.text);
-  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(118, 92));
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 92));
   QTest::mouseMove(&editor, QPoint(400, 300), 10);
   application.processEvents();
   if (!snapshotMatches(renderCapture(capture, selection, {clicked, toolbar},
@@ -1137,10 +1352,10 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
     }
   }
 
-  QTest::keyClick(&editor, Qt::Key_Escape);
+  QTest::keyClick(&editor, Qt::Key_V);
   application.processEvents();
   if (editor.cursor().shape() != Qt::ArrowCursor) {
-    error = QStringLiteral("Escape did not return to Select tool");
+    error = QStringLiteral("V did not return to Select tool");
     return false;
   }
 
@@ -1556,7 +1771,28 @@ int main(int argc, char **argv) {
   QApplication application(argc, argv);
   if (!loadCaptureFonts())
     return 17;
+  // Exercise production Open dispatch, then exit without an event-loop turn.
+  if (application.arguments().contains(QStringLiteral("--open-app-exit-helper"))) {
+    CaptureData synthetic;
+    synthetic.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+    synthetic.source.fill(Qt::green);
+    synthetic.previewSize = synthetic.source.size();
+    synthetic.monitor.geometry = QRect(0, 0, 800, 600);
+    synthetic.monitor.pixelSize = synthetic.source.size();
+    synthetic.monitor.scale = 1.0;
+    CaptureEditor helper(synthetic, CaptureEditor::CaptureMode::File);
+    helper.resize(1000, 700);
+    helper.show();
+    application.processEvents();
+    QTest::mouseClick(&helper, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(60 + 764 + 18, 28));
+    return helper.isVisible() ? 118 : 0;
+  }
   QString snapshotError;
+  if (!runCutoutAndEscapeChecks(snapshotError)) {
+    qCritical().noquote() << snapshotError;
+    return 100;
+  }
   if (!runPositionalImageTargetCheck(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 70;
@@ -1934,7 +2170,7 @@ int main(int argc, char **argv) {
   const QImage beforeTextSnapshot = flushedSnapshot(editor, snapshotPath);
   QTest::keyClick(&editor, Qt::Key_T);
   // Text size panel under the Text toolbar button (shifted by Highlighter).
-  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(341, 133));
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(327, 133));
   QWheelEvent textSizeWheel(QPointF(360, 320), QPointF(360, 320), {}, {0, -120},
                             Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase,
                             false);
@@ -2471,12 +2707,188 @@ int main(int argc, char **argv) {
   QTest::keyClick(&editor, Qt::Key_T);
   QTest::keyClick(&editor, Qt::Key_Escape);
   application.processEvents();
-  if (!editor.isVisible() || editor.cursor().shape() != Qt::ArrowCursor)
-    return 24;
-  QTest::keyClick(&editor, Qt::Key_Escape);
-  application.processEvents();
   if (editor.isVisible())
-    return 25;
+    return 24;
+
+  // Only a temporary fake xdg-open may launch; never start a real viewer.
+  {
+    QTemporaryDir fixture;
+    if (!fixture.isValid())
+      return 110;
+    QDir exportRoot(fixture.filePath(QStringLiteral("exports with spaces é")));
+    const QString launcher = fixture.filePath(QStringLiteral("xdg-open"));
+    const QString record = fixture.filePath(QStringLiteral("opened"));
+    const QString gate = fixture.filePath(QStringLiteral("parent-exited"));
+    if (!QDir().mkpath(exportRoot.path()))
+      return 110;
+    const QProcessEnvironment previousEnvironment = QProcessEnvironment::systemEnvironment();
+    const auto restoreDirectory = qScopeGuard([&] {
+      for (const char *key : {"PATH", "NIRISNAP_SCREENSHOT_DIR",
+                              "QT_WAYLAND_SHELL_INTEGRATION", "NIRISNAP_TEST_OPEN_RECORD",
+                              "NIRISNAP_TEST_OPEN_GATE", "NIRISNAP_TEST_OPEN_SENTINEL"}) {
+        if (previousEnvironment.contains(QString::fromLatin1(key)))
+          qputenv(key, previousEnvironment.value(QString::fromLatin1(key)).toUtf8());
+        else
+          qunsetenv(key);
+      }
+    });
+    qputenv("PATH", fixture.path().toUtf8());
+    qputenv("NIRISNAP_SCREENSHOT_DIR", exportRoot.path().toUtf8());
+    qputenv("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell");
+    qputenv("NIRISNAP_TEST_OPEN_RECORD", record.toUtf8());
+    qputenv("NIRISNAP_TEST_OPEN_SENTINEL", "inherited");
+    qunsetenv("NIRISNAP_TEST_OPEN_GATE");
+    QFile opener(launcher);
+    if (!opener.open(QIODevice::WriteOnly))
+      return 110;
+    const QByteArray script =
+        "#!/bin/sh\n"
+        "if [ -n \"$NIRISNAP_TEST_OPEN_GATE\" ]; then\n"
+        "  n=0; while [ ! -f \"$NIRISNAP_TEST_OPEN_GATE\" ]; do\n"
+        "    n=$((n+1)); [ \"$n\" -lt 100 ] || exit 9; /bin/sleep 0.05\n"
+        "  done\n"
+        "fi\n"
+        "printf '%s\\n' \"$#\" \"${QT_WAYLAND_SHELL_INTEGRATION-unset}\" "
+        "\"$NIRISNAP_TEST_OPEN_SENTINEL\" \"$1\" > \"$NIRISNAP_TEST_OPEN_RECORD\"\n"
+        "exit 7\n";
+    if (opener.write(script) != script.size())
+      return 110;
+    opener.close();
+    const auto waitForRecord = [&](const QString &path) {
+      const QByteArray expected = "1\nunset\ninherited\n" + path.toUtf8() + '\n';
+      QElapsedTimer deadline;
+      deadline.start();
+      while (deadline.elapsed() < 5000) {
+        QFile logged(record);
+        if (logged.open(QIODevice::ReadOnly) && logged.readAll() == expected)
+          return true;
+        QTest::qWait(10);
+      }
+      return false;
+    };
+    const QString clipboardSentinel = QStringLiteral("open-app-keeps-clipboard");
+    QApplication::clipboard()->setText(clipboardSentinel);
+    for (const bool launchSucceeds : {true, false}) {
+      QFile::remove(record);
+      // A nonexecutable launcher fails to start; exit 7 above does not.
+      if (!QFile::setPermissions(launcher, QFile::ReadOwner | QFile::WriteOwner |
+                                             (launchSucceeds ? QFile::ExeOwner : QFile::Permissions{})))
+        return 110;
+      QString exportedPath;
+      {
+        CaptureEditor openEditor(capture);
+        openEditor.resize(1000, 700);
+        openEditor.show();
+        application.processEvents();
+        QTest::mousePress(&openEditor, Qt::LeftButton, Qt::NoModifier,
+                         QPoint(180, 160));
+        QTest::mouseMove(&openEditor, QPoint(680, 480), 20);
+        QTest::mouseRelease(&openEditor, Qt::LeftButton, Qt::NoModifier,
+                           QPoint(680, 480));
+        // Solid secure redaction and marker over a cropped selection.
+        QTest::keyClick(&openEditor, Qt::Key_D);
+        QTest::keyClick(&openEditor, Qt::Key_D);
+        QTest::mousePress(&openEditor, Qt::LeftButton, Qt::NoModifier,
+                         QPoint(350, 300));
+        QTest::mouseMove(&openEditor, QPoint(440, 360), 20);
+        QTest::mouseRelease(&openEditor, Qt::LeftButton, Qt::NoModifier,
+                           QPoint(440, 360));
+        QTest::keyClick(&openEditor, Qt::Key_C);
+        QTest::mouseClick(&openEditor, Qt::LeftButton, Qt::NoModifier,
+                          QPoint(550, 400));
+        application.processEvents();
+        const QImage expected = openEditor.renderCurrentOutput()
+                                    .convertToFormat(QImage::Format_ARGB32);
+        if (expected.size() != QSize(500, 320) ||
+            expected.pixelColor(145, 135) != QColor(QStringLiteral("#121216")))
+          return 115;
+        const QStringList before = QDir(exportRoot.path()).entryList(
+            {QStringLiteral("*.png")}, QDir::Files);
+        // Open app follows Save, before Cutout and Close: button index 19.
+        QTest::mouseClick(&openEditor, Qt::LeftButton, Qt::NoModifier,
+                          QPoint(60 + 764 + 18, 167));
+        application.processEvents();
+        QStringList after = QDir(exportRoot.path()).entryList(
+            {QStringLiteral("*.png")}, QDir::Files);
+        for (const QString &existing : before)
+          after.removeAll(existing);
+        if (after.size() != 1) {
+          qWarning() << "Open app did not export one durable PNG";
+          return 111;
+        }
+        exportedPath = QDir(exportRoot.path()).filePath(after.constFirst());
+        const auto permissions = QFileInfo(exportedPath).permissions();
+        if (QImage(exportedPath).convertToFormat(QImage::Format_ARGB32) != expected ||
+            (permissions & (QFile::ReadGroup | QFile::WriteGroup | QFile::ReadOther |
+                            QFile::WriteOther)) ||
+            QApplication::clipboard()->text() != clipboardSentinel ||
+            openEditor.isVisible() == launchSucceeds ||
+            (launchSucceeds && !waitForRecord(exportedPath)) ||
+            (!launchSucceeds && QFileInfo::exists(record)))
+          return 112;
+        if (!launchSucceeds) {
+          // Subsequent edits must use runtime snapshots, not overwrite export.
+          QTest::keyClick(&openEditor, Qt::Key_C);
+          QTest::mouseClick(&openEditor, Qt::LeftButton, Qt::NoModifier,
+                            QPoint(500, 400));
+          if (!openEditor.waitForSnapshot() ||
+              QImage(exportedPath).convertToFormat(QImage::Format_ARGB32) != expected)
+            return 113;
+          QTest::keyClick(&openEditor, Qt::Key_Escape);
+        }
+      }
+      if (!QFileInfo::exists(exportedPath))
+        return 114;
+    }
+    // Detached launcher waits until its short-lived editor parent has exited.
+    QFile::remove(record);
+    if (!QFile::setPermissions(launcher, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner))
+      return 118;
+    const QString lifecycleRoot = fixture.filePath(QStringLiteral("parent exit exports é"));
+    if (!QDir().mkpath(lifecycleRoot))
+      return 118;
+    QProcess helper;
+    QProcessEnvironment helperEnvironment = QProcessEnvironment::systemEnvironment();
+    helperEnvironment.insert(QStringLiteral("NIRISNAP_SCREENSHOT_DIR"), lifecycleRoot);
+    helperEnvironment.insert(QStringLiteral("NIRISNAP_TEST_OPEN_GATE"), gate);
+    helper.setProcessEnvironment(helperEnvironment);
+    helper.start(QCoreApplication::applicationFilePath(), {QStringLiteral("--open-app-exit-helper")});
+    if (!helper.waitForFinished(10000) || helper.exitStatus() != QProcess::NormalExit ||
+        helper.exitCode() != 0 || QFileInfo::exists(record))
+      return 118;
+    const QStringList lifecycleFiles = QDir(lifecycleRoot).entryList({QStringLiteral("*.png")}, QDir::Files);
+    if (lifecycleFiles.size() != 1)
+      return 118;
+    QFile release(gate);
+    if (!release.open(QIODevice::WriteOnly))
+      return 118;
+    release.close();
+    const QString lifecyclePath = QDir(lifecycleRoot).filePath(lifecycleFiles.constFirst());
+    if (!waitForRecord(lifecyclePath) || QImage(lifecyclePath).isNull())
+      return 118;
+
+    // Failed durable save must not start a launcher or discard the editor.
+    QFile::remove(record);
+    const QString blockedDirectory = QDir(exportRoot.path()).filePath("not-a-directory");
+    QFile blocker(blockedDirectory);
+    if (!blocker.open(QIODevice::WriteOnly))
+      return 116;
+    blocker.close();
+    qputenv("NIRISNAP_SCREENSHOT_DIR", blockedDirectory.toUtf8());
+    CaptureEditor blockedEditor(capture, CaptureEditor::CaptureMode::File);
+    blockedEditor.resize(1000, 700);
+    blockedEditor.show();
+    application.processEvents();
+    // Full 800×600 image fits available height: toolbar is above image at y=10.
+    QTest::mouseClick(&blockedEditor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(60 + 764 + 18, 28));
+    application.processEvents();
+    QTest::qWait(100);
+    if (QFileInfo::exists(record) || !blockedEditor.isVisible() ||
+        QApplication::clipboard()->text() != clipboardSentinel)
+      return 117;
+    QTest::keyClick(&blockedEditor, Qt::Key_Escape);
+  }
 
   QString savedPath;
   {

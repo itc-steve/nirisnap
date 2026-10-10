@@ -30,6 +30,18 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
     pointer.lineTo(9, 21);
     pointer.closeSubpath();
     painter.drawPath(pointer);
+  } else if (action == QStringLiteral("tool-cutout")) {
+    painter.drawRect(QRectF(3, 3, 5, 18));
+    painter.drawRect(QRectF(16, 3, 5, 18));
+    // Crossed-out inner strip; arrows pull retained sides toward the seam.
+    painter.setPen(QPen(color, 1.5, Qt::DashLine));
+    painter.drawLine(QPointF(10, 3), QPointF(10, 21));
+    painter.drawLine(QPointF(14, 3), QPointF(14, 21));
+    painter.setPen(QPen(color, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.drawLine(QPointF(10, 10), QPointF(14, 14));
+    painter.drawLine(QPointF(10, 14), QPointF(14, 10));
+    painter.drawPolyline(QPolygonF{{5, 10}, {7, 12}, {5, 14}});
+    painter.drawPolyline(QPolygonF{{19, 10}, {17, 12}, {19, 14}});
   } else if (action == QStringLiteral("tool-arrow")) {
     painter.drawLine(QPointF(7, 17), QPointF(17, 7));
     painter.drawLine(QPointF(7, 7), QPointF(17, 7));
@@ -205,6 +217,11 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
       for (const qreal y : {6.0, 12.0, 18.0})
         painter.drawEllipse(QPointF(x, y), 1.7, 1.7);
     }
+  } else if (action == QStringLiteral("open-app")) {
+    painter.drawRoundedRect(QRectF(3, 7, 14, 14), 2, 2);
+    painter.drawPolyline(QPolygonF{{5, 18}, {9, 13}, {13, 17}});
+    painter.drawLine(QPointF(12, 12), QPointF(21, 3));
+    painter.drawPolyline(QPolygonF{{15, 3}, {21, 3}, {21, 9}});
   } else if (action == QStringLiteral("save")) {
     painter.drawLine(QPointF(12, 4), QPointF(12, 15));
     painter.drawLine(QPointF(8, 11), QPointF(12, 15));
