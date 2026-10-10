@@ -73,7 +73,7 @@ class TestManifest(unittest.TestCase):
     def test_manifest_contract(self):
         manifest = json.loads(read("manifest.json"))
         self.assertEqual(manifest["id"], "nirisnap")
-        self.assertEqual(manifest["version"], "0.2.0")
+        self.assertEqual(manifest["version"], "0.3.0")
         self.assertEqual(manifest["minNoctaliaVersion"], "4.4.3")
         self.assertEqual(manifest["entryPoints"], ENTRY_POINTS)
         self.assertEqual(manifest["dependencies"]["plugins"], [])
