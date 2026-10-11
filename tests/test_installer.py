@@ -14,6 +14,7 @@ class InstallerTest(unittest.TestCase):
         env = os.environ | {
             "HOME": str(home),
             "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_DATA_HOME": str(home / ".local/share"),
             "XDG_CACHE_HOME": str(home / ".cache"),
             "NIRISNAP_PREFIX": str(home / ".local"),
         }
@@ -34,10 +35,21 @@ class InstallerTest(unittest.TestCase):
             self.assertNotIn("Would run: sudo pacman", result.stdout)
             self.assertNotIn("hypr" + "land", result.stdout.lower())
 
+    def test_check_uses_v5_data_home_without_registry_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            registry = home / ".config/noctalia/plugins.json"
+            registry.parent.mkdir(parents=True)
+            registry.write_text("invalid legacy registry must not be read")
+            result = self.run_check(home)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(str(home / ".local/share/noctalia/plugins/nirisnap"), result.stdout)
+            self.assertEqual(registry.read_text(), "invalid legacy registry must not be read")
+
     def test_check_refuses_existing_plugin_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            plugin = home / ".config/noctalia/plugins/nirisnap"
+            plugin = home / ".local/share/noctalia/plugins/nirisnap"
             plugin.mkdir(parents=True)
             result = self.run_check(home)
             self.assertNotEqual(result.returncode, 0)

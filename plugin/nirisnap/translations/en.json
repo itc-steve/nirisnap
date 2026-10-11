@@ -1,0 +1,23 @@
+{
+  "settings.default_mode": "Default capture",
+  "settings.output_mode": "Capture output",
+  "settings.icon_color": "Icon color",
+  "mode.region": "Region",
+  "mode.window": "Window",
+  "mode.fullscreen": "Full monitor",
+  "output.edit": "Annotation editor",
+  "output.copy": "Copy (skip editor)",
+  "output.save": "Save (skip editor)",
+  "output.copy-save": "Copy + save (skip editor)",
+  "color.default": "Default foreground",
+  "color.primary": "Primary",
+  "color.secondary": "Secondary",
+  "color.tertiary": "Tertiary",
+  "color.error": "Error",
+  "widget.tooltip": "Nirisnap: capture · middle click: panel · right click: settings",
+  "clipboard": "Edit clipboard image",
+  "settings": "Settings",
+  "close": "Close",
+  "error.missing": "nirisnap not found on PATH. Build/install it and add ~/.local/bin to your session PATH.",
+  "error.launch": "Could not launch Nirisnap. Try nirisnap --capture-region from a terminal."
+}

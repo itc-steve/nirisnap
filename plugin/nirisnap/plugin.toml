@@ -1,0 +1,59 @@
+id = "itc-steve/nirisnap"
+name = "Nirisnap"
+version = "2.0.0"
+plugin_api = 24
+author = "itc-steve"
+license = "MIT"
+icon = "camera"
+description = "Native Niri capture and annotation launcher."
+dependencies = ["nirisnap"]
+
+[[setting]]
+key = "default_mode"
+type = "select"
+label_key = "settings.default_mode"
+default = "region"
+options = [
+  { value = "region", label_key = "mode.region" },
+  { value = "window", label_key = "mode.window" },
+  { value = "fullscreen", label_key = "mode.fullscreen" },
+]
+
+[[setting]]
+key = "output_mode"
+type = "select"
+label_key = "settings.output_mode"
+default = "edit"
+options = [
+  { value = "edit", label_key = "output.edit" },
+  { value = "copy", label_key = "output.copy" },
+  { value = "save", label_key = "output.save" },
+  { value = "copy-save", label_key = "output.copy-save" },
+]
+
+[[setting]]
+key = "icon_color"
+type = "select"
+label_key = "settings.icon_color"
+default = "primary"
+options = [
+  { value = "on_surface", label_key = "color.default" },
+  { value = "primary", label_key = "color.primary" },
+  { value = "secondary", label_key = "color.secondary" },
+  { value = "tertiary", label_key = "color.tertiary" },
+  { value = "error", label_key = "color.error" },
+]
+
+[[widget]]
+id = "capture"
+entry = "widget.luau"
+[widget.actions]
+middle = "none"
+
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 340
+height = 340
+placement = "floating"
+position = "top_right"

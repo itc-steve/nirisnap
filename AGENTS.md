@@ -21,7 +21,7 @@ Nirisnap is a native Wayland screenshot and annotation overlay for Niri, Noctali
 | `src/editor.cpp/.hpp` | Annotation editor and capture selection |
 | `src/pin.cpp/.hpp` | Always-visible pinned capture surfaces |
 | `tests/` | Offscreen Qt smoke and stdlib contract checks |
-| `plugin/nirisnap/` | Noctalia 4.x plugin |
+| `plugin/nirisnap/` | Noctalia v5 Luau widget, panel, and typed settings |
 | `packaging/` | CachyOS installer and Ctrl+Shift+1 Niri keybind snippet |
 
 ## Commands
@@ -45,7 +45,7 @@ Run behavior checks after each change. Do not rerun an unchanged successful chec
 - Never crop monitor pixels as fallback for failed native window capture.
 - Never pass external values through `sh -c`.
 - Noctalia plugin arguments are fixed allowlisted arrays.
-- Installer must not edit live Niri configuration or Noctalia `settings.json`.
+- Installer must not edit live Niri configuration or Noctalia config/state.
 - Preserve `LICENSE` and `assets/OFL.txt`.
 
 ## Release

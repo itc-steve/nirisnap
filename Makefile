@@ -6,7 +6,7 @@ GENERATOR ?= Ninja
 CMAKE ?= cmake
 CLANG_TIDY ?= clang-tidy
 CLAZY ?= clazy-standalone
-QMLLINT ?= qmllint
+NOCTALIA ?= noctalia
 PYTHON ?= python3
 
 LINT_SOURCES := \
@@ -18,7 +18,7 @@ LINT_SOURCES := \
 	tests/pin-lifecycle-smoke.cpp tests/instance-lock-smoke.cpp
 LINT_CHECKS ?= -*,clang-analyzer-*,bugprone-*,performance-*,misc-*
 
-.PHONY: all configure build clean install check contracts smoke lint qt-lint
+.PHONY: all configure build clean install check contracts smoke lint qt-lint plugin-lint
 
 all: build
 
@@ -59,20 +59,17 @@ qt-lint: build
 		done; \
 	else \
 		echo "make check: clazy unavailable; skipping Qt-specific clazy pass"; \
-	fi; \
-	if command -v "$(QMLLINT)" >/dev/null 2>&1 && \
-			test -d /etc/xdg/quickshell/noctalia-shell; then \
-		"$(QMLLINT)" -I /etc/xdg/quickshell/noctalia-shell \
-			plugin/nirisnap/*.qml; \
-	else \
-		echo "make check: Noctalia or qmllint unavailable; skipping QML lint"; \
 	fi
+
+plugin-lint:
+	$(NOCTALIA) plugins lint plugin/nirisnap
 
 contracts:
 	$(PYTHON) -m unittest discover -s tests -p 'test_*.py' -v
 
 check: build
 	$(MAKE) contracts
+	$(MAKE) plugin-lint
 	$(MAKE) smoke
 	$(MAKE) lint
 	$(MAKE) qt-lint

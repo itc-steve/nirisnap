@@ -28,13 +28,15 @@ Nirisnap reads focused-output, workspace, and window metadata from Niri's stable
 
 ## Install on CachyOS Niri + Noctalia
 
-Target stack is the default CachyOS Niri desktop: **Niri**, **Noctalia Shell 4.x** via `qs -c noctalia-shell`, and **noctalia-qs**.
+Target stack: **Niri** and **Noctalia v5**, plugin API **24** or later (tested offline with v5.2.1).
+The Noctalia v4 QML plugin is removed; previous revisions remain in Git history.
+The native binary, build, and direct Niri keybind remain independent of Noctalia.
 
 You need:
 
-- `niri` and `qs` on `PATH`
-- `~/.local/bin` on `PATH` (CachyOS user sessions usually have this)
-- Noctalia Shell 4.4.3 or later (CachyOS `noctalia-shell`)
+- `niri` and `noctalia` on `PATH`
+- `~/.local/bin` on your desktop session `PATH`
+- Noctalia v5 supporting plugin API 24 (v5.0.0-beta.9 or later)
 
 ### 1. Build and install Nirisnap
 
@@ -49,7 +51,7 @@ The installer runs as your desktop user. It asks `sudo` only for packages.
 It builds Nirisnap, runs the offscreen smoke suite, then installs under `~/.local`.
 It links the Noctalia plugin and copies a Niri keybind snippet.
 It will not replace an existing Nirisnap install or plugin path.
-It does not edit Noctalia `settings.json` or Niri configuration.
+It does not edit Noctalia config/state or Niri configuration, reload the shell, or enable the plugin.
 
 Packages it can install:
 
@@ -60,27 +62,35 @@ wl-clipboard tesseract tesseract-data-eng libnotify
 
 Set `NIRISNAP_PREFIX` to use a prefix other than `~/.local`.
 
-### 2. Confirm `qs` starts
+### 2. Discover and enable the v5 plugin
+
+The installer links `plugin/nirisnap` under `$XDG_DATA_HOME/noctalia/plugins/nirisnap`
+(default `~/.local/share/noctalia/plugins/nirisnap`). Installed does not mean enabled:
 
 ```bash
-qs --version
+noctalia msg config-reload
+noctalia msg plugins enable itc-steve/nirisnap
+noctalia msg plugins list
 ```
 
-If that prints a version, restart Noctalia:
+For an existing binary install, skip the installer (it refuses overwrites) and add this checkout as a path source instead:
 
 ```bash
-qs kill -c noctalia-shell
-qs -d -c noctalia-shell
+noctalia plugins lint ./plugin/nirisnap
+noctalia msg plugins source add nirisnap-dev path "$PWD/plugin"
+noctalia msg config-reload
+noctalia msg plugins enable itc-steve/nirisnap
 ```
 
-If `qs` dies with `undefined symbol` … `Qt_6_PRIVATE_API`, the CachyOS `noctalia-qs` package is older than your Qt. Rebuild it. See [If qs fails after a Qt upgrade](#if-qs-fails-after-a-qt-upgrade).
+Use one discovery method, not both. No Quickshell or v4 packages are needed.
 
 ### 3. Add the bar widget
 
 1. Open **Noctalia Settings → Bar → Widgets**.
-2. Add **Nirisnap**.
+2. Add **Nirisnap**, entry `itc-steve/nirisnap:capture`.
 
-The plugin matches CachyOS Noctalia 4.x (`minNoctaliaVersion` 4.4.3).
+The capture panel is `itc-steve/nirisnap:panel`. Shared typed settings live under
+**Settings → Plugins → Nirisnap → gear**. No separate settings script is needed.
 
 Bar controls:
 
@@ -91,17 +101,29 @@ Bar controls:
 | Right click | Open plugin settings |
 
 Panel actions: Region, Window, Full monitor, and Edit clipboard image.
-Settings choose default capture, output behavior, and icon color.
+Settings choose default capture (region/window/fullscreen), output (editor/copy/save/copy+save),
+and theme-role icon color. V4 settings are not automatically imported; reselect them in v5.
+Clipboard always opens the editor. Captures close the panel first, then launch after a 200 ms
+unmap grace; slow compositor animations may need a longer grace. Other open shell surfaces
+are not forcibly dismissed. No screenshot or clipboard contents are read by the plugin.
 
-IPC from a terminal or a Niri bind:
+IPC from a terminal or a Niri bind (capture widget must be placed on the target output):
 
 ```bash
-qs -c noctalia-shell ipc call plugin:nirisnap toggle
-qs -c noctalia-shell ipc call plugin:nirisnap region
-qs -c noctalia-shell ipc call plugin:nirisnap window
-qs -c noctalia-shell ipc call plugin:nirisnap fullscreen
-qs -c noctalia-shell ipc call plugin:nirisnap clipboard
+noctalia msg plugin itc-steve/nirisnap:capture focused toggle
+noctalia msg plugin itc-steve/nirisnap:capture focused region
+noctalia msg plugin itc-steve/nirisnap:capture focused window
+noctalia msg plugin itc-steve/nirisnap:capture focused fullscreen
+noctalia msg plugin itc-steve/nirisnap:capture focused clipboard
+noctalia msg panel-toggle itc-steve/nirisnap:panel
 ```
+
+The plugin launches fixed allowlisted argv through a detached delay helper, never `sh -c`.
+Missing binary/launch acceptance failures show notifications; later capture/editor errors
+remain the native binary's responsibility. No daemon or polling of captures is added.
+Mosaic/solid redaction, pins, OCR, backdrops, and single-instance toggle stay in the native
+editor; quick-output flags skip that editor. Noctalia's built-in screenshots do not replace
+these extras.
 
 ### 4. Bind Ctrl+Shift+1 (required)
 
@@ -132,45 +154,6 @@ Niri hot-reloads a valid config. Press `Ctrl+Shift+1` to open the region overlay
 If the key does nothing, Niri cannot find `nirisnap` on `PATH`. Put `~/.local/bin` on `PATH`, or spawn the full path `~/.local/bin/nirisnap`.
 
 Do not also `include` the copied snippet while the same key remains in `keybinds.kdl`. That is a duplicate bind. The file at `~/.local/share/nirisnap/nirisnap-keybinds.kdl` is a reference copy of the replacement line.
-
-### If `qs` fails after a Qt upgrade
-
-`noctalia-qs` links Qt **private** APIs. A `qt6-base` / `qt6-declarative` upgrade can break `/usr/bin/qs` until CachyOS rebuilds the package.
-
-Symptom:
-
-```text
-qs: symbol lookup error: qs: undefined symbol: … version Qt_6_PRIVATE_API
-```
-
-`sudo pacman -S noctalia-qs` reinstalls the same broken binary. Do not do that until the repo version is newer than your Qt.
-
-Rebuild the tagged `noctalia-qs` that CachyOS ships (today: `v0.0.12`) against the installed Qt:
-
-```bash
-sudo pacman -S --needed cli11 wayland-protocols vulkan-headers cmake ninja pkgconf \
-  qt6-base qt6-declarative qt6-wayland qt6-svg qt6-shadertools jemalloc
-
-git clone --depth 1 --branch v0.0.12 --recurse-submodules \
-  https://github.com/noctalia-dev/noctalia-qs.git
-cd noctalia-qs
-
-cmake -GNinja -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=/usr \
-  -DINSTALL_QML_PREFIX=lib/qt6/qml \
-  -DDISTRIBUTOR="CachyOS local Qt rebuild" \
-  -DUSE_JEMALLOC=ON \
-  -DCRASH_HANDLER=OFF
-
-cmake --build build --parallel
-sudo cmake --install build
-qs --version
-qs kill -c noctalia-shell
-qs -d -c noctalia-shell
-```
-
-This overwrites `/usr/bin/qs`. A later `pacman -S noctalia-qs` from an unfixed repo will restore the broken binary. Rebuild again, or wait for CachyOS to publish a package built against the new Qt.
 
 ## CLI
 
@@ -306,11 +289,23 @@ QT_QPA_PLATFORM=offscreen ./build/nirisnap-smoke /tmp/nirisnap-smoke
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-Full local gate:
+Full local gate (requires Noctalia v5 for manifest/config lint and `lua` for offline
+execution of the scripts' Lua-compatible subset):
 
 ```bash
 make check
 ```
+
+Plugin-only checks, without a running shell or captures:
+
+```bash
+make plugin-lint
+python3 -m unittest discover -s tests -p 'test_plugin_contract.py' -v
+```
+
+Plugin API reference: [Noctalia v5 development](https://docs.noctalia.dev/noctalia/plugins/development/).
+Offline tests stub host UI/process APIs; live rendering, focus, unmap timing, and capture flows
+still need checking in a desktop session.
 
 ## Attribution
 

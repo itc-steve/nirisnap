@@ -20,7 +20,7 @@ jobs:
         run: >-
           pacman -Syu --noconfirm --needed
           base-devel cmake ninja pkgconf qt6-base layer-shell-qt
-          tesseract tesseract-data-eng python
+          tesseract tesseract-data-eng python lua
 
       - name: Check out source
         uses: actions/checkout@v4
@@ -28,6 +28,7 @@ jobs:
       - name: Check scripts and contracts
         run: |
           bash -n packaging/install-local.sh
+          sh -n plugin/nirisnap/launch.sh
           useradd --create-home builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
           runuser -u builder -- python3 -m unittest discover -s tests -p 'test_*.py' -v
