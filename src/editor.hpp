@@ -127,6 +127,11 @@ private:
   [[nodiscard]] QRectF annotationBounds(const Annotation &annotation) const;
   [[nodiscard]] QRectF selectedAnnotationsBounds() const;
   [[nodiscard]] bool annotationSelected(int index) const;
+  [[nodiscard]] Qt::KeyboardModifiers
+  heldModifiers(Qt::KeyboardModifiers reported) const {
+    return modifiersSeen_ ? reported : Qt::KeyboardModifiers(Qt::NoModifier);
+  }
+  [[nodiscard]] Interaction selectedHandleAt(const QPointF &point) const;
   [[nodiscard]] int annotationAt(const QPointF &point) const;
   [[nodiscard]] int hoveredSpotlightAt(const QPointF &position) const;
   [[nodiscard]] QRectF normalizedSelection(const QPointF &first,
@@ -137,8 +142,11 @@ private:
   [[nodiscard]] QVector<QRectF> cropHandleRects() const;
   [[nodiscard]] int cropHandleAt(const QPointF &point) const;
   [[nodiscard]] QRectF editImageRect() const;
+  [[nodiscard]] QRectF editFrameRect() const;
   [[nodiscard]] qreal editScale() const;
   [[nodiscard]] QPointF toAnnotationPoint(const QPointF &position) const;
+  [[nodiscard]] QPointF
+  toUnclampedAnnotationPoint(const QPointF &position) const;
   [[nodiscard]] QRectF sourceRect(const QRectF &logicalRect) const;
   [[nodiscard]] int windowAt(const QPointF &position) const;
   [[nodiscard]] int windowInDirection(int current, int key) const;
@@ -178,6 +186,10 @@ private:
   CaptureData capture_;
   Phase phase_ = Phase::Select;
   Tool tool_ = Tool::Select;
+  Tool toolBeforeEyedropper_ = Tool::Select;
+  // Launch-chord releases may go to compositor; trust pointers after a key
+  // event.
+  bool modifiersSeen_ = false;
   QRectF selection_;
   QPointF dragStart_;
   QRectF originalSelection_;

@@ -112,6 +112,10 @@ bool runTransformSmoke(QString &error) {
   }
 
   const QByteArray originalPath = qgetenv("PATH");
+  const bool hadOmpLimit = qEnvironmentVariableIsSet("OMP_THREAD_LIMIT");
+  const QByteArray originalOmpLimit = qgetenv("OMP_THREAD_LIMIT");
+  const bool hadOcrLanguages = qEnvironmentVariableIsSet("NIRISNAP_OCR_LANGS");
+  const QByteArray originalOcrLanguages = qgetenv("NIRISNAP_OCR_LANGS");
   qputenv("PATH", commands.path().toUtf8() + ':' + originalPath);
   qputenv("NIRISNAP_TEST_PPM", ppmPath.toUtf8());
   qputenv("NIRISNAP_TEST_PNG", pngPath.toUtf8());
@@ -120,6 +124,14 @@ bool runTransformSmoke(QString &error) {
   qputenv("NIRISNAP_TEST_CAPTURE_PATH", capturePath.toUtf8());
   const auto restore = [&] {
     qputenv("PATH", originalPath);
+    if (hadOmpLimit)
+      qputenv("OMP_THREAD_LIMIT", originalOmpLimit);
+    else
+      qunsetenv("OMP_THREAD_LIMIT");
+    if (hadOcrLanguages)
+      qputenv("NIRISNAP_OCR_LANGS", originalOcrLanguages);
+    else
+      qunsetenv("NIRISNAP_OCR_LANGS");
     for (const char *name : {"NIRISNAP_TEST_PPM", "NIRISNAP_TEST_PNG",
                              "NIRISNAP_TEST_NIRI_LOG", "NIRISNAP_TEST_GRIM_LOG",
                              "NIRISNAP_TEST_CAPTURE_PATH",
@@ -130,7 +142,9 @@ bool runTransformSmoke(QString &error) {
                              "NIRISNAP_TEST_PICK_MARKER",
                              "NIRISNAP_TEST_PICK_RESPONSE",
                              "NIRISNAP_TEST_WINDOW_RESULT",
-                             "NIRISNAP_TEST_GRIM_GARBAGE"})
+                             "NIRISNAP_TEST_GRIM_GARBAGE",
+                             "NIRISNAP_TEST_OCR_LOG",
+                             "NIRISNAP_TEST_OCR_INPUT"})
       qunsetenv(name);
   };
   const auto fail = [&](const QString &message) {
@@ -138,6 +152,47 @@ bool runTransformSmoke(QString &error) {
     restore();
     return false;
   };
+
+  const QString ocrLogPath = QDir(commands.path()).filePath(QStringLiteral("ocr.log"));
+  const QString ocrInputPath = QDir(commands.path()).filePath(QStringLiteral("ocr.png"));
+  if (!writeExecutable(QDir(commands.path()).filePath(QStringLiteral("tesseract")),
+                       QByteArrayLiteral(
+                           "#!/usr/bin/env bash\n"
+                           "set -euo pipefail\n"
+                           "printf '%s\\n%s\\n%s\\n' \"${OMP_THREAD_LIMIT:-unset}\" \"$NIRISNAP_TEST_PNG\" \"$*\" > \"$NIRISNAP_TEST_OCR_LOG\"\n"
+                           "cat > \"$NIRISNAP_TEST_OCR_INPUT\"\n"
+                           "printf 'synthetic OCR\\n'\n")))
+    return fail(QStringLiteral("Could not create OCR environment wrapper"));
+  qputenv("NIRISNAP_TEST_OCR_LOG", ocrLogPath.toUtf8());
+  qputenv("NIRISNAP_TEST_OCR_INPUT", ocrInputPath.toUtf8());
+  qputenv("NIRISNAP_OCR_LANGS", QByteArrayLiteral("eng+deu"));
+  for (const bool inheritedLimit : {false, true}) {
+    if (inheritedLimit)
+      qputenv("OMP_THREAD_LIMIT", QByteArrayLiteral("16"));
+    else
+      qunsetenv("OMP_THREAD_LIMIT");
+    QString ocrError;
+    if (recognizeText(png, ocrError) != QStringLiteral("synthetic OCR") ||
+        !ocrError.isEmpty())
+      return fail(QStringLiteral("OCR wrapper did not receive PNG input"));
+    QFile ocrLog(ocrLogPath);
+    QFile ocrInput(ocrInputPath);
+    if (!ocrLog.open(QIODevice::ReadOnly) ||
+        ocrLog.readAll() != QByteArrayLiteral("1\n") + pngPath.toUtf8() +
+                                QByteArrayLiteral("\nstdin stdout --oem 1 --psm 6 -l eng+deu --dpi 300 -c preserve_interword_spaces=1\n") ||
+        !ocrInput.open(QIODevice::ReadOnly) ||
+        ocrInput.read(8) != QByteArray::fromHex("89504e470d0a1a0a") ||
+        qEnvironmentVariableIsSet("OMP_THREAD_LIMIT") != inheritedLimit ||
+        qgetenv("OMP_THREAD_LIMIT") != (inheritedLimit ? QByteArrayLiteral("16") : QByteArray()))
+      return fail(QStringLiteral("OCR child limit, inherited environment, argv, stdin or parent environment was incorrect"));
+  }
+  QFile::remove(ocrLogPath);
+  qputenv("NIRISNAP_OCR_LANGS", QByteArrayLiteral("eng;invalid"));
+  QString invalidOcrError;
+  if (!recognizeText(png, invalidOcrError).isEmpty() ||
+      invalidOcrError != QStringLiteral("Invalid NIRISNAP_OCR_LANGS value") ||
+      QFile::exists(ocrLogPath))
+    return fail(QStringLiteral("Invalid OCR languages started tesseract"));
 
   CaptureData capture;
   if (!captureFocusedMonitor(capture, true, error) ||

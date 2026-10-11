@@ -25,6 +25,12 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Configure release build
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compile
+        run: cmake --build build --parallel
+
       - name: Check scripts and contracts
         run: |
           bash -n packaging/install-local.sh
@@ -38,12 +44,6 @@ jobs:
             XDG_CACHE_HOME=/home/builder/.cache \
             NIRISNAP_PREFIX=/home/builder/.local \
             ./packaging/install-local.sh --check
-
-      - name: Configure release build
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Compile
-        run: cmake --build build --parallel
 
       - name: Run interaction smoke
         env:

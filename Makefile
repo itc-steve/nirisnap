@@ -31,8 +31,8 @@ build: configure
 	$(CMAKE) --build $(BUILD_DIR) --parallel
 
 smoke: build
-	QT_QPA_PLATFORM=offscreen ./$(BUILD_DIR)/nirisnap-smoke \
-		$(BUILD_DIR)/nirisnap-smoke-output
+	QT_QPA_PLATFORM=offscreen "$(BUILD_DIR)/nirisnap-smoke" \
+		"$(BUILD_DIR)/nirisnap-smoke-output"
 
 lint: build
 	@set -eu; \

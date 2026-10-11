@@ -2,6 +2,11 @@
 
 Native Wayland screenshot capture and annotation for **Niri**, **Noctalia Shell**, and **CachyOS/Arch**.
 
+> [!WARNING]
+> **Noctalia v5 migration:** the bundled launcher requires plugin API **24+** and no longer supports Noctalia v4. Re-add the v5 bar widget and reselect settings; v4 settings are not automatically migrated. See the [migration notes](CHANGELOG.md#breaking-change-noctalia-v5-migration). The native binary and direct Niri keybind remain independent of Noctalia.
+
+**Version 1.21.0** intentionally jumps from 0.3.0 to track our Omasnap maintenance baseline, not full feature parity. See [CHANGELOG.md](CHANGELOG.md).
+
 ## Features
 
 - Freeform region, Niri-native window, and full-monitor capture.
@@ -18,7 +23,7 @@ Native Wayland screenshot capture and annotation for **Niri**, **Noctalia Shell*
 
 ## How capture works
 
-Nirisnap reads focused-output, workspace, and window metadata from Niri's stable JSON IPC. `grim` captures focused-output pixels before Nirisnap maps its layer-shell overlay.
+Nirisnap reads focused-output, workspace, and window metadata from Niri's stable JSON IPC. `grim` captures focused-output pixels before Nirisnap maps its layer-shell overlay. During that initial monitor capture, invoke Nirisnap again to cancel; `Escape` works once the overlay appears.
 
 `--capture-window` uses `niri msg pick-window`, then asks Niri to render that exact window with `screenshot-window --id`. It never substitutes a desktop crop when native window capture fails.
 
@@ -262,9 +267,11 @@ Use `--capture-window` or Noctalia's **Window** action for Niri's native tiled-w
 
 **Cutout:** select a capture, then click the Cutout toolbar icon (two retained sides, crossed-out strip, and inward join arrows) or press `X`. Drag **vertically** between the top and bottom edges of a full-width horizontal strip; drag **horizontally** between the left and right edges of a full-height vertical strip. The larger drag direction chooses the axis (ties choose horizontal). The red preview marks the entire strip to remove. Release to delete it and join the remaining sides; right-click cancels the drag. Keep some image on both sides: empty, edge-only, and whole-image cuts are rejected. No automatic whitespace detection. Press `V` to return to existing outer crop handles.
 
-Cutout snaps strip boundaries to native pixels without downscaling. It flattens existing annotations and secure redactions into the joined image, **excluding the decorative backdrop**; the backdrop remains separately selectable. Status confirms flattening. `Ctrl+Z` restores the original source and editable layers; `Ctrl+Shift+Z` or `Ctrl+Y` reapplies the cut. New annotations remain editable.
+Cutout rounds the start down and the end up to remove every native pixel touched by the strip, without downscaling. It flattens existing annotations and secure redactions into the joined image, **excluding the decorative backdrop**; the backdrop remains separately selectable. Status confirms flattening. `Ctrl+Z` restores the original source and editable layers; `Ctrl+Shift+Z` or `Ctrl+Y` reapplies the cut. New annotations remain editable.
 
 **Open in default image app:** click the image-with-outward-arrow button after Save. Nirisnap saves the current full-resolution crop, annotations, secure redactions, and backdrop to the normal screenshot directory, then starts `xdg-open` with that durable PNG before closing the overlay. Clipboard stays unchanged. If the launcher cannot start, the overlay stays open and reports the saved path. The PNG survives closing Nirisnap either way. The system PNG association chooses the app (for example Pinta); Nirisnap neither hardcodes an app nor changes associations. Launcher startup cannot confirm that the external app ultimately opened the file. External apps do not inherit Nirisnap's layer-shell setting.
+
+The eyedropper preserves the previous tool and selection after sampling. Selected layer handles remain usable beyond the image edge; empty space still does not start annotations. Outer crop drags keep the source image anchored until release, then refit the result. Backdrop preview framing, rounded corners, and shadows follow the exported image.
 
 ### Pinned captures
 
@@ -285,7 +292,7 @@ Pins live on every workspace through layer-shell; no Niri window rule is require
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
-QT_QPA_PLATFORM=offscreen ./build/nirisnap-smoke /tmp/nirisnap-smoke
+QT_QPA_PLATFORM=offscreen ./build/nirisnap-smoke build/nirisnap-smoke-output
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
@@ -309,7 +316,14 @@ still need checking in a desktop session.
 
 ## Attribution
 
-Nirisnap is adapted from [Tobi Lütke's Omasnap](https://github.com/tobi/omasnap) under the MIT License. Original copyright and license text remain in [`LICENSE`](LICENSE).
+Nirisnap is adapted from [Tobi Lütke's Omasnap](https://github.com/omacom/omasnap) under the MIT License. Original copyright and license text remain in [`LICENSE`](LICENSE).
+
+Selected fixes from upstream through `6771b19` are adapted rather than bulk-merged:
+- Capture-before-overlay (`e4a065a`), child-only OCR thread limit (`9a556b3`), and absolute build-directory support (`8907f03`).
+- Native cutout boundaries (`7631d7b`), selected handles (`3eed781`, `c84cef3`), launch modifiers (`84a8382`), and eyedropper state (`028aaf6`).
+- Anchored crop drags (`ca5834e`) and backdrop preview/export parity (`b41815b`).
+
+Niri capture, Noctalia v5, custom cutout/Open behavior, and private runtime recovery remain fork-owned. Upstream persistent recents, default autosave, Hyprland integration, and replacement pin behavior are not enabled.
 
 The workflow also draws inspiration from [Shottr](https://shottr.cc/), [Satty](https://github.com/Satty-org/Satty), and [Flameshot](https://github.com/flameshot-org/flameshot).
 

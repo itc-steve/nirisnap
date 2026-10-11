@@ -17,6 +17,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -95,9 +96,13 @@ struct ProcessResult {
   bool finished = false;
 };
 
-ProcessResult runProcess(const QString &program, const QStringList &arguments,
-                         const QByteArray &input = {}, int timeoutMs = 10000) {
+ProcessResult runProcess(
+    const QString &program, const QStringList &arguments,
+    const QByteArray &input = {}, int timeoutMs = 10000,
+    const std::optional<QProcessEnvironment> &environment = std::nullopt) {
   QProcess process;
+  if (environment)
+    process.setProcessEnvironment(*environment);
   process.setProcessChannelMode(QProcess::SeparateChannels);
   process.start(program, arguments);
   if (!process.waitForStarted(2000))
@@ -770,6 +775,26 @@ void paintCaptureBackground(QPainter &painter, const QRectF &bounds,
   }
 }
 
+void paintCaptureShadow(QPainter &painter, const QRectF &imageRect,
+                        qreal scaleX, qreal scaleY) {
+  painter.setPen(Qt::NoPen);
+  for (int layer = 24; layer > 0; --layer) {
+    const qreal spread = layer * std::max(scaleX, scaleY) * 0.85;
+    painter.setBrush(QColor(0, 0, 0, 2 + (24 - layer) / 5));
+    painter.drawRoundedRect(imageRect.adjusted(-spread, -spread + 14 * scaleY,
+                                               spread, spread + 14 * scaleY),
+                            16 * scaleX + spread, 16 * scaleY + spread);
+  }
+  for (int layer = 12; layer > 0; --layer) {
+    const qreal spread = layer * std::max(scaleX, scaleY) * 0.45;
+    painter.setBrush(QColor(0, 0, 0, 3 + (12 - layer)));
+    painter.drawRoundedRect(imageRect.adjusted(-spread, -spread + 8 * scaleY,
+                                               spread, spread + 8 * scaleY),
+                            kCaptureBackgroundRadius * scaleX + spread,
+                            kCaptureBackgroundRadius * scaleY + spread);
+  }
+}
+
 bool probeFocusedMonitor(MonitorInfo &monitor, QString &error) {
   const ProcessResult output =
       runProcess(QStringLiteral("niri"),
@@ -985,9 +1010,13 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
                   resized ? QPointF{} : sourceOriginOffset);
   const bool hasBackground = backgroundStyle != BackgroundStyle::None;
   const int marginX =
-      hasBackground ? static_cast<int>(std::round(64.0 * scaleX)) : 0;
+      hasBackground
+          ? static_cast<int>(std::round(kCaptureBackgroundMargin * scaleX))
+          : 0;
   const int marginY =
-      hasBackground ? static_cast<int>(std::round(64.0 * scaleY)) : 0;
+      hasBackground
+          ? static_cast<int>(std::round(kCaptureBackgroundMargin * scaleY))
+          : 0;
   QImage output(cropped.width() + marginX * 2, cropped.height() + marginY * 2,
                 QImage::Format_ARGB32_Premultiplied);
   output.fill(Qt::transparent);
@@ -999,23 +1028,10 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
   if (hasBackground) {
     paintCaptureBackground(painter, output.rect(), backgroundStyle);
     const QRectF imageRect(marginX, marginY, cropped.width(), cropped.height());
-    painter.setPen(Qt::NoPen);
-    for (int layer = 24; layer > 0; --layer) {
-      const qreal spread = layer * std::max(scaleX, scaleY) * 0.85;
-      painter.setBrush(QColor(0, 0, 0, 2 + (24 - layer) / 5));
-      painter.drawRoundedRect(imageRect.adjusted(-spread, -spread + 14 * scaleY,
-                                                 spread, spread + 14 * scaleY),
-                              16 * scaleX + spread, 16 * scaleY + spread);
-    }
-    for (int layer = 12; layer > 0; --layer) {
-      const qreal spread = layer * std::max(scaleX, scaleY) * 0.45;
-      painter.setBrush(QColor(0, 0, 0, 3 + (12 - layer)));
-      painter.drawRoundedRect(imageRect.adjusted(-spread, -spread + 8 * scaleY,
-                                                 spread, spread + 8 * scaleY),
-                              14 * scaleX + spread, 14 * scaleY + spread);
-    }
+    paintCaptureShadow(painter, imageRect, scaleX, scaleY);
     QPainterPath clip;
-    clip.addRoundedRect(imageRect, 14 * scaleX, 14 * scaleY);
+    clip.addRoundedRect(imageRect, kCaptureBackgroundRadius * scaleX,
+                        kCaptureBackgroundRadius * scaleY);
     painter.save();
     painter.setClipPath(clip);
     painter.drawImage(imageRect.topLeft(), cropped);
@@ -1294,6 +1310,8 @@ QString recognizeText(const QImage &image, QString &error) {
     error = QStringLiteral("Invalid NIRISNAP_OCR_LANGS value");
     return {};
   }
+  QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+  environment.insert(QStringLiteral("OMP_THREAD_LIMIT"), QStringLiteral("1"));
   const ProcessResult result = runProcess(
       QStringLiteral("tesseract"),
       {QStringLiteral("stdin"), QStringLiteral("stdout"),
@@ -1302,7 +1320,7 @@ QString recognizeText(const QImage &image, QString &error) {
        QStringLiteral("-l"), languages,
        QStringLiteral("--dpi"), QStringLiteral("300"),
        QStringLiteral("-c"), QStringLiteral("preserve_interword_spaces=1")},
-      payload, 30000);
+      payload, 30000, environment);
   if (!result.finished || result.exitCode != 0) {
     error = QStringLiteral("OCR failed for languages %1: %2")
                 .arg(languages, QString::fromUtf8(result.error).trimmed());

@@ -37,6 +37,8 @@ struct CaptureData {
 };
 
 enum class BackgroundStyle { None, Aurora, Sunset, Lagoon, Violet };
+inline constexpr qreal kCaptureBackgroundMargin = 64.0;
+inline constexpr qreal kCaptureBackgroundRadius = 14.0;
 enum class QuickOutputMode { None, Copy, Save, Both };
 enum class CaptureOutcome { Success, Cancelled, Error };
 
@@ -130,6 +132,8 @@ void paintDefaultLayer(QPainter &painter, const QImage &redacted,
                        const QVector<Annotation> &annotations);
 void paintCaptureBackground(QPainter &painter, const QRectF &bounds,
                             BackgroundStyle backgroundStyle);
+void paintCaptureShadow(QPainter &painter, const QRectF &imageRect,
+                        qreal scaleX, qreal scaleY);
 /**
  * Renders the selection region at `targetSize` for the redaction layer. The
  * result carries no annotations; callers overlay redactions with

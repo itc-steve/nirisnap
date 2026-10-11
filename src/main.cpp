@@ -381,8 +381,12 @@ int main(int argc, char **argv) {
   if (instantFullscreenOutput)
     editor.setSuppressSnapshots(true);
   QObject::connect(&editor, &CaptureEditor::captureReady, &editor,
-                   [&editor, instantFullscreenOutput, quickOutputMode](
-                       bool ok, const QString &error) {
+                   [&editor, &terminationRequested, instantFullscreenOutput,
+                    quickOutputMode](bool ok, const QString &error) {
+                     if (terminationRequested.load(std::memory_order_acquire)) {
+                       QCoreApplication::quit();
+                       return;
+                     }
                      if (!ok) {
                        sendCaptureNotification(
                            QStringLiteral("Screenshot failed: %1").arg(error));
@@ -414,6 +418,8 @@ int main(int argc, char **argv) {
                                               .arg(data.monitor.name)
                                               .arg(workspace)
                                               .arg(data.windows.size());
+                     editor.show();
+                     editor.setFocus(Qt::ActiveWindowFocusReason);
                    });
 
   if (!instantFullscreenOutput) {
@@ -439,8 +445,12 @@ int main(int argc, char **argv) {
     layerWindow->setKeyboardInteractivity(
         LayerShellQt::Window::KeyboardInteractivityExclusive);
     layerWindow->setActivateOnShow(true);
-    editor.show();
-    editor.setFocus(Qt::ActiveWindowFocusReason);
+    // Preloaded file and native window images need no monitor pixel capture.
+    // Otherwise stay unmapped until the asynchronous capture succeeds.
+    if (editingImage || nativeWindowCapture) {
+      editor.show();
+      editor.setFocus(Qt::ActiveWindowFocusReason);
+    }
   }
 
   if (!editingImage && !nativeWindowCapture) {
